@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Medicine Stock Tracker · NSDC</title>
+  <link rel="stylesheet" href="css/dashboard.css">
+</head>
+<body>
+  <main class="launcher">
+    <header class="launcher-hero">
+      <div class="brand-eyebrow">NSDC · Medicine Stock Tracker</div>
+      <h1>Inventory dashboards</h1>
+      <p>Live stock, requests and consumption from your Zoho Creator reports — one dashboard for each store.</p>
+    </header>
+
+    <div class="launch-grid">
+      <a class="launch-card" href="housekeeping.html" data-page="housekeeping.html" style="--accent:#0d9488">
+        <span class="brand-mark" data-icon="sparkles"></span>
+        <div>
+          <h2>Housekeeping</h2>
+          <p>Cleaning supplies, housekeeping tasks and staff performance.</p>
+        </div>
+        <ul>
+          <li data-icon="check">Task assignment &amp; priorities</li>
+          <li data-icon="check">Location-wise requests</li>
+          <li data-icon="check">Pending, in-progress &amp; completed tasks</li>
+          <li data-icon="check">Housekeeping performance reports</li>
+        </ul>
+        <span class="go">Open dashboard <i data-icon="arrowRight"></i></span>
+      </a>
+
+      <a class="launch-card" href="pantry.html" data-page="pantry.html" style="--accent:#e8590c">
+        <span class="brand-mark" data-icon="coffee"></span>
+        <div>
+          <h2>Pantry</h2>
+          <p>Pantry stock, daily consumption, expiry and expenses.</p>
+        </div>
+        <ul>
+          <li data-icon="check">Daily &amp; monthly consumption</li>
+          <li data-icon="check">Item-wise &amp; department-wise use</li>
+          <li data-icon="check">Expiry &amp; near-expiry tracking</li>
+          <li data-icon="check">Pantry expense tracking</li>
+        </ul>
+        <span class="go">Open dashboard <i data-icon="arrowRight"></i></span>
+      </a>
+
+      <a class="launch-card" href="stationery.html" data-page="stationery.html" style="--accent:#4f46e5">
+        <span class="brand-mark" data-icon="pen"></span>
+        <div>
+          <h2>Stationery</h2>
+          <p>Stationery stock, issues to employees and monthly cost.</p>
+        </div>
+        <ul>
+          <li data-icon="check">Employee-wise issue</li>
+          <li data-icon="check">Department-wise consumption</li>
+          <li data-icon="check">Pending requests</li>
+          <li data-icon="check">Monthly consumption &amp; cost analysis</li>
+        </ul>
+        <span class="go">Open dashboard <i data-icon="arrowRight"></i></span>
+      </a>
+    </div>
+  </main>
+
+  <script src="js/config.js"></script>
+  <script src="js/core.js"></script>
+  <script>
+    (function () {
+      document.querySelectorAll("[data-icon]").forEach(function (el) {
+        var svg = CIMS.icon(el.getAttribute("data-icon"));
+        if (el.tagName === "I") el.replaceWith(svg); else el.insertBefore(svg, el.firstChild);
+      });
+      // Keep the query string Zoho Creator adds, so the SDK still works on the next page.
+      document.querySelectorAll("a[data-page]").forEach(function (a) {
+        a.href = a.getAttribute("data-page") + location.search;
+      });
+    })();
+  </script>
+</body>
+</html>

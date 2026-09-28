@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Housekeeping Inventory · NSDC</title>
+  <link rel="stylesheet" href="css/dashboard.css">
+</head>
+<body data-dashboard="housekeeping">
+  <div class="app">
+    <header class="topbar" id="topbar"></header>
+
+    <nav class="nav" role="tablist" aria-label="Dashboard sections">
+      <button class="tab" role="tab" type="button" data-tab="overview" data-icon="grid">Overview</button>
+      <button class="tab" role="tab" type="button" data-tab="inventory" data-icon="package">Inventory</button>
+      <button class="tab" role="tab" type="button" data-tab="requests" data-icon="clipboard">Requests</button>
+      <button class="tab" role="tab" type="button" data-tab="housekeeping" data-icon="sparkles">Housekeeping management</button>
+    </nav>
+
+    <main>
+      <!-- 1. Dashboard overview + 2. Quick actions -->
+      <section data-section="overview" role="tabpanel" aria-label="Overview"></section>
+      <!-- 3. Inventory management -->
+      <section data-section="inventory" role="tabpanel" aria-label="Inventory management" hidden></section>
+      <!-- 4. Request management -->
+      <section data-section="requests" role="tabpanel" aria-label="Request management" hidden></section>
+      <!-- 5. Housekeeping management (My_Housekeeping_Inventory_Requests) -->
+      <section data-section="housekeeping" role="tabpanel" aria-label="Housekeeping management" hidden></section>
+    </main>
+  </div>
+
+  <script src="https://static.zohocdn.com/creator/widgets/version/2.0/widgetsdk-min.js"></script>
+  <script src="js/config.js"></script>
+  <script src="js/core.js"></script>
+  <script src="js/creator-api.js"></script>
+  <script src="js/model.js"></script>
+  <script src="js/charts.js"></script>
+  <script src="js/components.js"></script>
+  <script src="js/views.js"></script>
+  <script src="js/views-modules.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
