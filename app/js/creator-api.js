@@ -11,12 +11,22 @@
   function inFrame() {
     try { return window.self !== window.top; } catch (e) { return true; }
   }
-  function referrerBase() {
+  // The Creator site hosting this widget (its data centre: creatorapp.zoho.in, .com, .eu …).
+  // Browsers often send no referrer into the widget frame, so also ask the frame's ancestors
+  // (Chrome / Edge) and the query string Creator adds to the widget URL.
+  function hostBase() {
+    const creator = (s) => {
+      try { const u = new URL(s); return /^creatorapp\.zoho\.[a-z.]+$/i.test(u.hostname) || /(^|\.)zohocreator\./i.test(u.hostname) ? u.origin : ""; }
+      catch (e) { return ""; }
+    };
     try {
-      if (!document.referrer) return "";
-      const u = new URL(document.referrer);
-      return /zoho|creator/i.test(u.hostname) ? u.origin : "";
-    } catch (e) { return ""; }
+      const anc = window.location.ancestorOrigins;
+      if (anc) for (let i = anc.length - 1; i >= 0; i--) { const b = creator(anc[i]); if (b) return b; }
+    } catch (e) { /* not supported */ }
+    try {
+      for (const v of new URLSearchParams(location.search).values()) { const b = creator(v); if (b) return b; }
+    } catch (e) { /* no query string */ }
+    return creator(document.referrer || "");
   }
   function parsed(e) {
     if (typeof e === "string") { try { return JSON.parse(e); } catch (_) { return { message: e }; } }
@@ -66,7 +76,7 @@
       owner: cfg.ownerName || p.scope || "",
       env: p.envUrlFragment || "",
       user: p.loginUser || "",
-      base: String(cfg.creatorBaseUrl || referrerBase() || "https://creatorapp.zoho.com").replace(/\/+$/, "")
+      base: String(cfg.creatorBaseUrl || hostBase() || "https://creatorapp.zoho.com").replace(/\/+$/, "")
     };
     if (!A.ctx.appName) throw new Error("Could not detect the Creator application — set appName in js/config.js.");
     return A;

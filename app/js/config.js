@@ -14,9 +14,9 @@ CIMS.config = {
   appName: "",
   // Account (owner) name used in Creator links. Blank = detected at runtime.
   ownerName: "",
-  // Creator base URL for your data centre, e.g. "https://creatorapp.zoho.in".
-  // Blank = detected from the host page, falling back to creatorapp.zoho.com.
-  creatorBaseUrl: "",
+  // Creator base URL for your data centre (zoho.in = India, zoho.com = US, zoho.eu = EU …).
+  // Blank = detected from the Creator page the widget runs in, falling back to creatorapp.zoho.com.
+  creatorBaseUrl: "https://creatorapp.zoho.in",
   // Pattern for opening a form / report in Creator.
   // Placeholders: {base} {owner} {env} (e.g. /environment/development, blank in production) {app} {kind} (Form | Report) {name}
   urlTemplate: "{base}/{owner}{env}/{app}/#{kind}:{name}",
