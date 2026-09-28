@@ -3,23 +3,33 @@
 (function (C) {
   "use strict";
   const h = C.h, U = C.util, ui = C.ui;
-  const SOURCES = ["items", "transactions", "requests", "purchaseRequests"];
-  const SOURCE_LABEL = { items: "Item master", transactions: "Stock ledger", requests: "Requests", purchaseRequests: "Purchase requests" };
-  const KEY_FIELDS = {
-    items: ["item", "stock", "reorderLevel", "unitPrice", "category"],
-    transactions: ["date", "item", "txnType", "quantity"],
-    requests: ["date", "item", "quantity", "status", "department", "employee"],
-    purchaseRequests: ["date", "item", "quantity", "status"]
+  const SOURCES = C.loader.SOURCES;
+  const SOURCE_LABEL = {
+    items: "Current stock", itemMaster: "Item master (prices)", transactions: "Stock ledger", requests: "Requests",
+    requestLines: "Requested items", purchaseRequests: "Purchase requests", purchaseLines: "Purchase request items", batches: "Batches (expiry)",
+    people: "People (departments)"
   };
-  // denied: reports this user can't open — skipped on later refreshes this session (saves API calls)
-  const state = { key: null, dash: null, tab: "overview", subs: {}, period: "this_month", model: null, rendered: {}, apiReady: false, denied: new Set() };
+  const KEY_FIELDS = {
+    items: ["item", "itemCode", "stock", "reorderLevel", "unit"],
+    itemMaster: ["item", "itemCode", "unitPrice"],
+    transactions: ["date", "item", "txnType", "quantity"],
+    requests: ["requestNo", "date", "status", "employee"],
+    requestLines: ["requestNo", "item", "quantity"],
+    purchaseRequests: ["requestNo", "date", "status"],
+    purchaseLines: ["requestNo"],
+    batches: ["item", "expiryDate", "stock"],
+    people: ["employee", "department"]
+  };
+  const state = { key: null, dash: null, tab: "overview", subs: {}, period: "this_month", model: null, rendered: {}, apiReady: false };
 
   function sectionEl(tab) { return document.querySelector('[data-section="' + tab + '"]'); }
   function tabs() { return Array.prototype.slice.call(document.querySelectorAll(".nav [data-tab]")); }
 
   /* ---------- navigation ---------- */
   function readHash() {
-    const parts = decodeURIComponent(location.hash.replace(/^#/, "")).split("/");
+    let h = location.hash.replace(/^#/, "");
+    try { h = decodeURIComponent(h); } catch (e) { /* malformed hash — use it as is */ }
+    const parts = h.split("/");
     if (parts[0] && sectionEl(parts[0])) state.tab = parts[0];
     if (parts[1]) state.subs[state.tab] = parts[1];
   }
@@ -84,15 +94,18 @@
     const srcBtn = h("button", { class: "btn", type: "button" }, C.icon("database"), "Data sources");
     srcBtn.addEventListener("click", openSources);
     state.updatedEl = h("span", { class: "updated" });
-    const switcher = cfg.showDashboardSwitcher ? h("nav", { class: "switcher", "aria-label": "Dashboards" }, Object.keys(cfg.dashboards).map((k) => {
-      const d = cfg.dashboards[k];
-      return h("a", { href: C.api.pageHref(d.page), "aria-current": k === state.key ? "page" : null }, C.icon(d.icon), d.label);
-    })) : null;
+    const switcher = cfg.showDashboardSwitcher ? h("nav", { class: "switcher", "aria-label": "Dashboards" },
+      h("a", { href: C.api.pageHref("widget.html") }, C.icon("grid"), "Console"),
+      Object.keys(cfg.dashboards).map((k) => {
+        const d = cfg.dashboards[k];
+        return h("a", { href: C.api.pageHref(d.page), "aria-current": k === state.key ? "page" : null }, C.icon(d.icon), d.label);
+      })) : null;
+    const printBtn = h("button", { class: "btn icon", type: "button", title: "Print this view", "aria-label": "Print this view", onclick: () => window.print() }, C.icon("printer"));
     C.clear(document.getElementById("topbar")).append(
       h("div", { class: "brand" }, h("div", { class: "brand-mark" }, C.icon(dash.icon)),
         h("div", null, h("div", { class: "brand-eyebrow" }, cfg.orgName + " · " + cfg.productName), h("h1", null, dash.title))),
       switcher || "", h("div", { class: "topbar-spacer" }),
-      h("div", { class: "controls" }, state.updatedEl, h("label", { class: "select" }, C.icon("calendar"), periodSel), srcBtn, state.refreshBtn));
+      h("div", { class: "controls" }, state.updatedEl, h("label", { class: "select" }, C.icon("calendar"), periodSel), srcBtn, printBtn, state.refreshBtn));
   }
 
   /* ---------- loading ---------- */
@@ -119,46 +132,20 @@
   }
 
   async function load(isRefresh) {
+    if (state.loading) return state.loading; // a refresh while loading joins the load in progress
+    state.loading = doLoad(isRefresh).finally(() => { state.loading = null; });
+    return state.loading;
+  }
+  async function doLoad(isRefresh) {
     if (isRefresh) { document.body.classList.add("is-refreshing"); state.refreshBtn.classList.add("spin"); }
     else showSkeleton();
     try {
       if (!state.apiReady) { await C.api.init(); state.apiReady = true; }
-      const dash = state.dash;
-      const raw = {};
-      // one fetch per report + criteria, even when two sources point at the same report
-      const cache = new Map();
-      const fetchOnce = (report, criteria) => {
-        const k = report + "|" + (criteria || "");
-        if (!cache.has(k)) cache.set(k, C.api.fetchAll(report, { criteria: criteria }));
-        return cache.get(k);
-      };
-      await Promise.all(SOURCES.map(async (s) => {
-        const list = U.list((dash.reports || {})[s]);
-        if (!list.length) { raw[s] = { report: "", state: "unconfigured", records: [] }; return; }
-        const criteria = (dash.criteria || {})[s];
-        const failed = [];
-        for (let i = 0; i < list.length; i++) { // first report that loads wins (All_ first, My_ as fallback)
-          const report = list[i], last = i === list.length - 1;
-          if (state.denied.has(report) && !last) { failed.push({ report: report, error: "no access (skipped this session)", denied: true }); continue; }
-          try {
-            const res = await fetchOnce(report, criteria);
-            raw[s] = { report: report, tried: list, state: "ok", records: res.records, truncated: res.truncated, fallbackFrom: failed };
-            return;
-          } catch (e) {
-            const denied = C.api.isAccessError(e);
-            if (denied) state.denied.add(report);
-            failed.push({ report: report, error: C.api.errorMessage(e), denied: denied });
-            if (!denied) break; // fall back only when the report can't be opened — not on timeouts or other errors
-          }
-        }
-        // name the report that actually broke (not the All_ report this user was expected to be refused)
-        const shown = (failed.find((f) => !f.denied) || failed[failed.length - 1]).report;
-        raw[s] = { report: shown, tried: list, state: "error", error: failed.map((f) => (list.length > 1 ? f.report + ": " : "") + f.error).join(" · "), records: [] };
-      }));
+      const raw = await C.loader.loadRaw(state.dash);
       state.model = C.model.build(raw, state.key);
       state.loadedAt = new Date();
       rerender();
-      const failed = SOURCES.filter((s) => raw[s].state === "error");
+      const failed = SOURCES.filter((s) => raw[s].state === "error" && !C.loader.OPTIONAL.has(s));
       if (failed.length) ui.toast("Could not load " + Array.from(new Set(failed.map((s) => raw[s].report))).join(", ") + " — see Data sources", "crit");
       else if (isRefresh) ui.toast("Dashboard refreshed", "good");
     } catch (e) {
@@ -179,7 +166,8 @@
   }
   function openSources() {
     const m = state.model, dash = state.dash, api = C.api.ctx || {};
-    const body = [ui.note(["Application ", h("b", null, api.appName || "—"), api.owner ? " · account " + api.owner : "", api.user ? " · signed in as " + api.user : ""])];
+    const body = [ui.note(["Application ", h("b", null, api.appName || "—"), api.owner ? " · account " + api.owner : "", api.env ? " · " + api.env.replace(/^\//, "") : "", api.user ? " · signed in as " + api.user : ""])];
+    if (m && m.excludedCount) body.push(ui.note([h("b", null, U.plural(m.excludedCount, "record")), " hidden as test data (item names matching ", h("code", null, "excludeItems"), " in js/config.js)."]));
     SOURCES.forEach((s) => {
       const list = U.list(dash.reports[s]);
       const src = m ? m.sources[s] : { state: list.length ? "notloaded" : "unconfigured", report: list[0], records: [] };
@@ -204,6 +192,13 @@
             ? "from Creator field " + m.stockStatusField + (m.statusMismatches.length ? " · " + U.plural(m.statusMismatches.length, "item") + " disagree with the quantities" : "")
             : "calculated: 0 or less = out of stock, at or below reorder level = low" + (m.stockStatusField ? " (Creator field " + m.stockStatusField + " not used)" : "")]);
         }
+        if (s === "people") rows.push(["Departments", U.fmtNum(m.peopleLinked || 0) + " of " + U.plural(m.requests.length, "request") + " matched to a person with a department"]);
+        if (s === "requests" || s === "purchaseRequests") {
+          const list = s === "requests" ? m.requests : m.purchases;
+          rows.push(["Items", U.fmtNum(list.filter((r) => r.hasLines).length) + " of " + U.plural(list.length, "request") + " have item lines" +
+            ((dash.lineLevel || {})[s] ? " (rows grouped by request no.)" : "")]);
+        }
+        if (src.lineFieldMap) rows.push(["Subform fields", Object.keys(src.lineFieldMap).filter((k) => src.lineFieldMap[k]).map((k) => k + " → " + src.lineFieldMap[k]).join(" · ")]);
         const usedKeys = new Set(found.map((k) => map[k]));
         const extra = Object.keys(src.records[0]).filter((k) => !usedKeys.has(k) && k !== "ID");
         if (extra.length) rows.push(["Other fields", extra.join(", ")]);

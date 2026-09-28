@@ -21,9 +21,10 @@
   U.num = function (v) {
     if (v == null || v === "") return null;
     if (typeof v === "number") return isFinite(v) ? v : null;
-    const s = U.text(v).replace(/[^0-9.\-]/g, "");
-    if (!s || s === "-" || s === ".") return null;
-    const n = parseFloat(s);
+    // the first number in the text: "Rs. 1,200.50" -> 1200.5, "12 pcs." -> 12 (codes like ITM-0036 are not numbers)
+    const m = U.text(v).replace(/(\d),(?=\d)/g, "$1").match(/(^|[^\w.\-])(-?\d+(?:\.\d+)?|-?\.\d+)/);
+    if (!m) return null;
+    const n = parseFloat(m[2]);
     return isFinite(n) ? n : null;
   };
 
@@ -164,7 +165,9 @@
         if (v == null || v === false) continue;
         if (k === "class") el.className = v;
         else if (k === "text") el.textContent = v;
-        else if (k === "style" && typeof v === "object") Object.assign(el.style, v);
+        else if (k === "style" && typeof v === "object") {
+          for (const s in v) { if (s.slice(0, 2) === "--") el.style.setProperty(s, v[s]); else el.style[s] = v[s]; } // custom properties need setProperty
+        }
         else if (k === "dataset") Object.assign(el.dataset, v);
         else if (k.slice(0, 2) === "on" && typeof v === "function") el.addEventListener(k.slice(2).toLowerCase(), v);
         else el.setAttribute(k, v === true ? "" : v);
@@ -233,6 +236,8 @@
     truck: '<path d="M14 18V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v11a1 1 0 0 0 1 1h2M15 18H9"/><path d="M19 18h2a1 1 0 0 0 1-1v-3.65a1 1 0 0 0-.22-.62l-3.48-4.35A1 1 0 0 0 17.52 8H14"/><circle cx="17" cy="18" r="2"/><circle cx="7" cy="18" r="2"/>',
     shield: '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/>',
     route: '<circle cx="6" cy="19" r="3"/><path d="M9 19h8.5a3.5 3.5 0 0 0 0-7h-11a3.5 3.5 0 0 1 0-7H15"/><circle cx="18" cy="5" r="3"/>',
+    printer: '<path d="M6 9V3h12v6"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect width="12" height="8" x="6" y="14" rx="1"/>',
+    download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5M12 15V3"/>',
     home: '<path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"/><path d="M3 10a2 2 0 0 1 .71-1.53l7-6a2 2 0 0 1 2.58 0l7 6A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>'
   };
   C.icon = function (name, cls) {

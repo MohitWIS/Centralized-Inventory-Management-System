@@ -105,8 +105,8 @@
         const data = (res && res.data) || [];
         out.push.apply(out, data);
         cursor = (res && (res.record_cursor || res.recordCursor || (res.headers && (res.headers.record_cursor || res.headers["record-cursor"])))) || null;
-        if (data.length < PAGE) break;
-        if (out.length >= max || !cursor) { truncated = true; break; }
+        if (data.length < PAGE || !cursor) break; // a full page without a cursor is the last page
+        if (out.length >= max) { truncated = true; break; }
       }
     } else {
       const PAGE = 200;
@@ -136,11 +136,12 @@
   /* Links into the Creator app. */
   A.url = function (kind, name) {
     const c = A.ctx;
-    return (C.config.urlTemplate || "{base}/{owner}/{app}/#{kind}:{name}")
+    const env = c.env ? "/" + String(c.env).replace(/^\/+|\/+$/g, "") : ""; // "/environment/development", blank in production
+    return (C.config.urlTemplate || "{base}/{owner}{env}/{app}/#{kind}:{name}")
       .replace("{base}", c.base || "https://creatorapp.zoho.com")
       .replace("{owner}", c.owner || "")
       .replace("{app}", c.appName || "")
-      .replace("{env}", c.env || "")
+      .replace("{env}", env)
       .replace("{kind}", kind)
       .replace("{name}", name);
   };

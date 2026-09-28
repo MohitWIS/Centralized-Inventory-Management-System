@@ -13,6 +13,12 @@
   const ageDays = (x) => (x.date ? U.daysBetween(x.date, new Date()) : 0);
   const byUrgency = (a, b) => a.priorityRank - b.priorityRank || (a.date || 0) - (b.date || 0);
   const noField = (label, key, example) => ui.note(["No " + label + " field was detected. Add its link name (for example ", h("code", null, example), ") to ", h("code", null, "config.fields." + key), "."], "warn");
+  const has = (ctx, f) => !!ctx.model.sources.requests.fieldMap[f];
+  // A requirement the Creator app doesn't capture yet: say what to add instead of showing an empty chart.
+  const notTracked = (icon, title, what, example, key) => ui.card({ body: ui.empty({ icon: icon, tone: "accent", title: title,
+    text: ["The request form in Creator doesn't record " + what + " yet. Add a field for it (for example ", h("code", null, example),
+      ") to the demand request form — it's picked up automatically, or put its link name in ", h("code", null, "config.fields." + key), "."] }) });
+  const optCols = (ctx) => ({ location: has(ctx, "location"), assignee: has(ctx, "assignedTo"), priority: has(ctx, "priority") });
 
   /* ================= 5. Housekeeping management ================= */
   const HK_TABS = [
@@ -34,19 +40,20 @@
     return h("div", { class: "stack" },
       K.kpiRow([
         ui.kpi({ label: "Requests", value: U.fmtNum(rows.length), icon: "clipboard", sub: ctx.range.label.toLowerCase() }),
-        ui.kpi({ label: "Open now", value: U.fmtNum(open.length), icon: "clock", tone: "warn", sub: U.fmtNum(open.filter((r) => !r.assignedTo).length) + " unassigned", onClick: () => ctx.setSub("housekeeping", "board") }),
+        ui.kpi({ label: "Open now", value: U.fmtNum(open.length), icon: "clock", tone: "warn", sub: has(ctx, "assignedTo") ? U.fmtNum(open.filter((r) => !r.assignedTo).length) + " unassigned" : "pending or in progress", onClick: () => ctx.setSub("housekeeping", "board") }),
         ui.kpi({ label: "Completed", value: U.fmtNum(done.length), icon: "checkCircle", tone: "good", sub: rows.length ? U.fmtPct((done.length / rows.length) * 100) + " of requests" : "" }),
         ui.kpi({ label: "Avg completion time", value: K.fmtDur(K.avg(done.map(K.tat).filter((x) => x != null && x >= 0))), icon: "gauge", tone: "info", sub: "request to completion" })
       ]),
       h("div", { class: "grid grid-main" },
         K.trendCard(ctx, { title: "Requests per month", sub: "Last 12 months", rows: m.requests, valFn: () => 1, format: U.fmtNum, tickFormat: U.fmtCompact, valueHeader: "Requests", countless: true, countNoun: "request" }),
         K.statusCard(ctx, rows, "Status mix", ctx.range.label)),
-      ui.card({ title: "Housekeeping requests", sub: ctx.range.label, actions: [K.openBtn(ctx, "requests")], flush: true, body: K.requestsTable(ctx, rows, { location: true, assignee: true, priority: true }) }));
+      ui.card({ title: "Housekeeping requests", sub: ctx.range.label, actions: [K.openBtn(ctx, "requests")], flush: true, body: K.requestsTable(ctx, rows, optCols(ctx)) }));
   };
 
   HK.assignment = function (ctx) {
     const g = need(ctx, "task assignment");
     if (g) return g;
+    if (!has(ctx, "assignedTo")) return notTracked("users", "Task assignment isn't tracked in Creator yet", "who a request is assigned to", "Assigned_To", "assignedTo");
     const m = ctx.model, r = ctx.range;
     const open = m.requests.filter(M.isOpen);
     const unassigned = open.filter((x) => !x.assignedTo);
@@ -73,6 +80,7 @@
   HK.priority = function (ctx) {
     const g = need(ctx, "priorities");
     if (g) return g;
+    if (!has(ctx, "priority")) return notTracked("flag", "Priority isn't tracked in Creator yet", "a priority (Urgent / High / Normal / Low)", "Priority", "priority");
     const m = ctx.model;
     const open = m.requests.filter(M.isOpen).sort(byUrgency);
     const groups = U.group(open, (x) => x.priority || "No priority").sort((a, b) => a.rows[0].priorityRank - b.rows[0].priorityRank);
@@ -81,14 +89,14 @@
       m.sources.requests.fieldMap.priority ? null : noField("priority", "priority", "Priority"),
       groups.length ? K.kpiRow(groups.slice(0, 5).map((gp) => ui.kpi({ label: gp.key, value: U.fmtNum(gp.count), icon: "flag", tone: toneOf(gp.key), sub: "open · oldest " + U.plural(Math.max.apply(null, gp.rows.map(ageDays)), "day") }))) : null,
       ui.card({ title: "Open tasks by priority", sub: "Most urgent and oldest first", flush: true,
-        body: ui.table({ columns: K.requestColumns({ priority: true, location: true, assignee: true, waiting: true }), rows: open, noun: "task", placeholder: "Search tasks…", sort: { key: "priority", dir: "asc" }, empty: "No open tasks." }) }));
+        body: ui.table({ columns: K.requestColumns(Object.assign(optCols(ctx), { waiting: true })), rows: open, noun: "task", placeholder: "Search tasks…", sort: { key: "priority", dir: "asc" }, empty: "No open tasks." }) }));
   };
 
   HK.location = function (ctx) {
     const g = need(ctx, "location-wise requests");
     if (g) return g;
     const m = ctx.model;
-    if (!m.sources.requests.fieldMap.location) return ui.card({ body: ui.empty({ icon: "pin", title: "No location field detected", text: ["Add the link name of your location / floor / area field to ", h("code", null, "config.fields.location"), "."] }) });
+    if (!has(ctx, "location")) return notTracked("pin", "Location isn't tracked in Creator yet", "where the request is for (floor, area or room)", "Location", "location");
     const rows = K.inPeriod(m.requests, ctx.range);
     const data = U.group(rows, (x) => x.location || "Unspecified").map((gp) => ({
       label: gp.key, value: gp.count, open: gp.rows.filter(M.isOpen).length, done: gp.rows.filter((x) => x.group === "completed").length,
@@ -97,7 +105,7 @@
     return h("div", { class: "stack" },
       ui.chartCard({ title: "Requests by location", sub: ctx.range.label, chart: () => CH.bars(data, { format: U.fmtNum, valueLabel: "requests", limit: 14 }),
         table: { columns: [{ key: "label", label: "Location", strong: true }, { key: "value", label: "Requests", num: true }, { key: "open", label: "Open", num: true }, { key: "done", label: "Completed", num: true }, { key: "top", label: "Most requested item" }], rows: data, sort: { key: "value", dir: "desc" }, noun: "location" } }),
-      ui.card({ title: "Open tasks by location", flush: true, body: K.requestsTable(ctx, m.requests.filter(M.isOpen), { location: true, assignee: true, priority: true, sort: { key: "location", dir: "asc" } }) }));
+      ui.card({ title: "Open tasks by location", flush: true, body: K.requestsTable(ctx, m.requests.filter(M.isOpen), Object.assign(optCols(ctx), { sort: { key: "location", dir: "asc" } })) }));
   };
 
   HK.board = function (ctx) {
@@ -117,7 +125,8 @@
         x.item && x.remarks ? h("span", null, C.icon("package"), x.item + (x.qty != null ? " × " + U.fmtNum(x.qty) : "")) : null,
         x.location ? h("span", null, C.icon("pin"), x.location) : null,
         h("span", null, C.icon("calendar"), U.fmtShort(x.date))),
-      h("div", { class: "task-foot" }, x.assignedTo ? ui.person(x.assignedTo) : ui.badge("Unassigned", "warn", "user"), x.priority ? ui.priorityBadge(x.priority) : ui.statusBadge(x.group, x.status)));
+      h("div", { class: "task-foot" }, !has(ctx, "assignedTo") ? ui.person(x.employee || "—") : x.assignedTo ? ui.person(x.assignedTo) : ui.badge("Unassigned", "warn", "user"),
+        x.priority ? ui.priorityBadge(x.priority) : ui.statusBadge(x.group, x.status)));
     return h("div", { class: "stack" },
       ui.note("Pending includes approved tasks that have not started. Completed shows " + ctx.range.label.toLowerCase() + "."),
       h("div", { class: "board" }, lanes.map((l) => h("div", { class: "lane" },
@@ -129,9 +138,43 @@
           l.rows.length > 40 ? h("div", { class: "mini-sub", style: { textAlign: "center", padding: "6px" } }, "+ " + U.fmtNum(l.rows.length - 40) + " more") : null)))));
   };
 
+  // Without an assignee in Creator, report how well requests are fulfilled (per requester) instead of per staff member.
+  function fulfilment(ctx) {
+    const m = ctx.model, r = ctx.range;
+    const rows = K.inPeriod(m.requests, r);
+    const done = rows.filter((x) => x.group === "completed");
+    const tats = done.map(K.tat).filter((x) => x != null && x >= 0);
+    const people = U.group(rows, (x) => x.employee || "Unspecified").map((s) => {
+      const d = s.rows.filter((x) => x.group === "completed");
+      return { name: s.key, requests: s.count, done: d.length, rate: s.count ? (d.length / s.count) * 100 : 0,
+        units: U.sum(d, (x) => (x.issuedQty != null ? x.issuedQty : x.qty)), tat: K.avg(d.map(K.tat).filter((x) => x != null && x >= 0)), open: s.rows.filter(M.isOpen).length };
+    });
+    return h("div", { class: "stack" },
+      ui.note(["Staff-wise performance needs an assignee on each request, which Creator doesn't record yet (for example an ", h("code", null, "Assigned_To"),
+        " field). Until then this shows how requests are fulfilled."]),
+      K.kpiRow([
+        ui.kpi({ label: "Requests", value: U.fmtNum(rows.length), icon: "clipboard", sub: r.label.toLowerCase() }),
+        ui.kpi({ label: "Fulfilment rate", value: U.fmtPct(rows.length ? (done.length / rows.length) * 100 : null), icon: "gauge", tone: "good", sub: U.fmtNum(done.length) + " issued" }),
+        ui.kpi({ label: "Avg time to issue", value: K.fmtDur(K.avg(tats)), icon: "clock", tone: "info", sub: "request to issue" }),
+        ui.kpi({ label: "Still open", value: U.fmtNum(rows.filter(M.isOpen).length), icon: "hourglass", tone: "warn", sub: "from this period" })
+      ]),
+      h("div", { class: "grid grid-main" },
+        ui.card({ title: "Fulfilment by requester", sub: r.label, flush: true, body: ui.table({ title: "Fulfilment by requester", columns: [
+          { key: "name", label: "Requested by", value: (s) => s.name, render: (s) => ui.person(s.name) },
+          { key: "requests", label: "Requests", num: true },
+          { key: "done", label: "Issued", num: true },
+          { key: "rate", label: "Fulfilled", value: (s) => s.rate, text: (s) => U.fmtPct(s.rate), className: "meter-cell", render: (s) => h("div", { class: "meter-row" }, ui.meter(s.rate, 100, s.rate >= 80 ? "good" : s.rate >= 50 ? "warn" : "crit"), h("span", { class: "mini-sub" }, U.fmtPct(s.rate))) },
+          { key: "units", label: "Units issued", num: true },
+          { key: "tat", label: "Avg time", num: true, value: (s) => s.tat, text: (s) => K.fmtDur(s.tat), render: (s) => K.fmtDur(s.tat) },
+          { key: "open", label: "Open now", num: true }
+        ], rows: people, noun: "requester", sort: { key: "requests", dir: "desc" }, search: people.length > 8, empty: "No requests in this period." }) }),
+        K.trendCard(ctx, { title: "Requests issued per month", sub: "Last 12 months", rows: m.requests.filter((x) => x.group === "completed"), dateFn: (x) => x.completedDate || x.date, valFn: () => 1, format: U.fmtNum, tickFormat: U.fmtCompact, valueHeader: "Issued", countless: true })));
+  }
+
   HK.performance = function (ctx) {
     const g = need(ctx, "performance reports");
     if (g) return g;
+    if (!has(ctx, "assignedTo")) return fulfilment(ctx);
     const m = ctx.model, r = ctx.range;
     const rows = K.inPeriod(m.requests, r).filter((x) => x.assignedTo);
     const staff = U.group(rows, (x) => x.assignedTo).map((s) => {
@@ -177,7 +220,18 @@
   PN.stock = K.currentStock;
   PN.alerts = K.reorderList;
   PN.items = (ctx) => (ctx.model.consumptionSource ? K.groupCard(ctx, { title: "Item-wise consumption", label: "Item", key: (c) => c.item, limit: 15, noun: "item" }) : noCons(ctx));
-  PN.departments = (ctx) => (ctx.model.consumptionSource ? K.groupCard(ctx, { title: "Department-wise consumption", label: "Department", key: (c) => c.department || "Unspecified", noun: "department" }) : noCons(ctx));
+  PN.departments = (ctx) => (!ctx.model.consumptionSource ? noCons(ctx)
+    : !ctx.model.hasDepartments ? ui.card({ body: ctx.model.peopleLoaded && ctx.model.requestersWithoutDept.length
+      // the user master loaded, but the people raising requests have no department on their user record
+      ? ui.empty({ icon: "building", tone: "accent", title: "The people raising requests have no department yet",
+        text: ["Departments come from each requester's record in ", h("code", null, ctx.model.sources.people.report), ". ",
+          U.plural(ctx.model.requestersWithoutDept.length, "requester") + " (" + ctx.model.requestersWithoutDept.slice(0, 5).join(", ") +
+          (ctx.model.requestersWithoutDept.length > 5 ? " …" : "") + ") " + (ctx.model.requestersWithoutDept.length === 1 ? "has" : "have") +
+          " no Department Name there. Fill it in, or add a Department field to the demand request form, and consumption splits by department automatically."] })
+      : ui.empty({ icon: "building", tone: "accent", title: "Departments aren't recorded on requests yet",
+        text: ["Consumption can only be split by department once the request form (or the requesting user) carries one. Add a ", h("code", null, "Department"),
+          " field — for example a lookup to the Department Master — to the demand request form in Creator; it's picked up automatically."] }) })
+    : K.groupCard(ctx, { title: "Department-wise consumption", label: "Department", key: (c) => c.department || "Unspecified", noun: "department" }));
 
   PN.consumption = function (ctx) {
     const m = ctx.model;
@@ -197,11 +251,15 @@
   };
 
   PN.expiry = function (ctx) {
-    const g = K.guard(ctx, "items", "expiry tracking");
-    if (g) return g;
     const m = ctx.model, near = ctx.cfg.nearExpiryDays || 30, t = U.today();
-    const rows = m.items.filter((i) => i.expiry).map((i) => Object.assign({}, i, { days: U.daysBetween(t, i.expiry) }));
-    if (!rows.length) return ui.card({ body: ui.empty({ icon: "hourglass", title: "No expiry dates on the item master", text: ["Add an expiry date field (for example ", h("code", null, "Expiry_Date"), ") to the item master, or put its link name in ", h("code", null, "config.fields.expiryDate"), "."] }) });
+    // batch-wise when a batch report is connected (one row per batch still in stock), else the item master's expiry
+    const byBatch = m.sources.batches.state === "ok";
+    if (!byBatch) { const g = K.guard(ctx, "items", "expiry tracking"); if (g) return g; }
+    const rows = byBatch
+      ? m.batches.filter((b) => b.expiry && (b.qty == null || b.qty > 0)).map((b) => ({ name: b.item, sub: b.batch, stock: b.qty, unit: b.unit, expiry: b.expiry, value: b.value, days: U.daysBetween(t, b.expiry) }))
+      : m.items.filter((i) => i.expiry).map((i) => ({ name: i.name, sub: i.subCategory || i.category, stock: i.stock, unit: i.unit, expiry: i.expiry, value: i.value, days: U.daysBetween(t, i.expiry) }));
+    if (!rows.length) return ui.card({ body: ui.empty({ icon: "hourglass", title: byBatch ? "No batches with stock have an expiry date" : "No expiry dates on the item master",
+      text: byBatch ? "Batches in " + m.sources.batches.report + " with remaining stock and an expiry date appear here." : ["Add an expiry date field (for example ", h("code", null, "Expiry_Date"), ") to the item master, or connect a batch report in ", h("code", null, "dashboards." + ctx.key + ".reports.batches"), "."] }) });
     const expired = rows.filter((i) => i.days < 0), soon = rows.filter((i) => i.days >= 0 && i.days <= near);
     const badge = (i) => (i.days < 0 ? ui.badge("Expired " + U.plural(-i.days, "day") + " ago", "crit", "ban")
       : i.days === 0 ? ui.badge("Expires today", "crit", "alert")
@@ -213,13 +271,14 @@
         ui.kpi({ label: "Expiring in " + near + " days", value: U.fmtNum(soon.length), icon: "hourglass", tone: "info" }),
         ui.kpi({ label: "Value at risk", value: U.fmtMoney(U.sum(expired.concat(soon), (i) => i.value) || null, true), icon: "rupee", tone: "violet", sub: "expired + near-expiry stock" })
       ]),
-      ui.card({ title: "Expiry tracking", sub: "Items with an expiry date, soonest first", flush: true, body: ui.table({ columns: [
-        { key: "name", label: "Item", strong: true, value: (i) => i.name, render: (i) => ui.cell(i.name, i.subCategory || i.category) },
-        { key: "stock", label: "In stock", num: true, value: (i) => i.stock },
+      ui.card({ title: "Expiry tracking", sub: (byBatch ? "Batches in stock" : "Items") + " with an expiry date, soonest first", flush: true, body: ui.table({ title: "Expiry tracking", columns: [
+        { key: "name", label: "Item", strong: true, value: (i) => i.name, search: (i) => i.sub, render: (i) => ui.cell(i.name, i.sub) },
+        byBatch ? { key: "sub", label: "Batch", value: (i) => i.sub } : null,
+        { key: "stock", label: "In stock", num: true, value: (i) => i.stock, text: (i) => (i.stock == null ? "" : U.fmtNum(i.stock) + (i.unit ? " " + i.unit : "")) },
         { key: "expiry", label: "Expiry date", date: true, value: (i) => i.expiry, render: (i) => U.fmtDate(i.expiry) },
-        { key: "days", label: "Status", value: (i) => i.days, render: badge },
+        { key: "days", label: "Status", value: (i) => i.days, text: (i) => (i.days < 0 ? "Expired " + U.plural(-i.days, "day") + " ago" : i.days === 0 ? "Expires today" : U.plural(i.days, "day") + " left"), render: badge },
         { key: "value", label: "Stock value", money: true, value: (i) => i.value }
-      ], rows: rows, noun: "item", sort: { key: "days", dir: "asc" } }) }));
+      ].filter(Boolean), rows: rows, noun: byBatch ? "batch" : "item", sort: { key: "days", dir: "asc" } }) }));
   };
 
   PN.expense = function (ctx) {

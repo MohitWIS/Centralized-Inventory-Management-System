@@ -1,6 +1,6 @@
 /* ==========================================================================
-   Medicine Stock Tracker — NSDC inventory dashboards
-   Shared styles for housekeeping.html, pantry.html, stationery.html, widget.html
+   NSDC Inventory Management — console and store dashboards
+   Shared styles for widget.html (console), housekeeping.html, pantry.html, stationery.html
    The page accent comes from --accent (set per dashboard in js/config.js).
    ========================================================================== */
 
@@ -410,30 +410,55 @@ table.tbl { width: 100%; border-collapse: separate; border-spacing: 0; font-size
 .toast.good svg.i { color: #47cd89; }
 .toast.crit svg.i { color: #f97066; }
 
-/* ---------- Launcher (widget.html) ---------- */
-.launcher { max-width: 1080px; margin: 0 auto; padding: 56px 24px 64px; }
-.launcher-hero { text-align: center; margin-bottom: 40px; }
-.launcher-hero .brand-eyebrow { margin-bottom: 10px; }
-.launcher-hero h1 { margin: 0; font-size: 34px; letter-spacing: -.025em; font-weight: 720; }
-.launcher-hero p { margin: 10px auto 0; max-width: 560px; color: var(--muted); font-size: 15px; }
-.launch-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(290px, 100%), 1fr)); gap: 18px; }
-.launch-card {
-  --accent: #0d9488; position: relative; display: grid; gap: 14px; padding: 24px; text-decoration: none; color: inherit; overflow: hidden;
+/* ---------- Quick actions not set up in Creator ---------- */
+.qa.off { background: var(--surface-2); border-style: dashed; }
+.qa.off .qa-title { color: var(--ink-2); }
+.qa.off .tone-tile { filter: grayscale(1); opacity: .6; }
+.qa.off:hover { background: var(--surface-2); border-color: var(--line); }
+
+/* ---------- Management console (widget.html) ---------- */
+.mod-card {
   --accent-strong: color-mix(in srgb, var(--accent) 76%, #000);
   --accent-soft: color-mix(in srgb, var(--accent) 9%, #fff);
   --accent-line: color-mix(in srgb, var(--accent) 30%, #fff);
-  background: var(--surface); border: 1px solid var(--line); border-radius: 18px; box-shadow: var(--shadow); transition: transform .18s, box-shadow .18s, border-color .18s;
+  position: relative; overflow: hidden;
 }
-.launch-card::before { content: ""; position: absolute; inset: 0 0 auto; height: 4px; background: var(--accent); }
-.launch-card:hover { transform: translateY(-3px); box-shadow: var(--shadow-lg); border-color: var(--accent-line); }
-.launch-card h2 { margin: 0; font-size: 19px; letter-spacing: -.01em; }
-.launch-card p { margin: 0; color: var(--muted); font-size: 13.5px; }
-.launch-card ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 7px; font-size: 13px; color: var(--ink-2); }
-.launch-card li { display: flex; align-items: center; gap: 8px; }
-.launch-card li svg.i { width: 15px; height: 15px; color: var(--accent); }
-.launch-card .go { display: inline-flex; align-items: center; gap: 6px; font-weight: 640; font-size: 13.5px; color: var(--accent-strong); }
-.launch-card .go svg.i { width: 16px; height: 16px; transition: transform .18s; }
-.launch-card:hover .go svg.i { transform: translateX(3px); }
+.mod-card::before { content: ""; position: absolute; inset: 0 0 auto; height: 4px; background: var(--accent); }
+.mod-head { display: flex; align-items: center; gap: 12px; padding: 18px 18px 10px; }
+.mod-head .titles { flex: 1; min-width: 0; }
+.mod-head .brand-mark { width: 40px; height: 40px; border-radius: 11px; }
+.mod-head .brand-mark svg.i { width: 20px; height: 20px; }
+.mod-rows { display: grid; padding: 4px 10px 12px; }
+.mod-row {
+  display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 10px; padding: 8px; border: 0; border-radius: 9px;
+  background: none; text-align: left; font-size: 13px; color: var(--ink-2);
+}
+.mod-row:hover { background: var(--hover); color: var(--ink); }
+.mod-row .tone-tile { width: 28px; height: 28px; border-radius: 8px; }
+.mod-row .tone-tile svg.i { width: 15px; height: 15px; }
+.mod-row b { font-size: 15px; color: var(--ink); font-variant-numeric: tabular-nums; }
+.mod-err { display: flex; align-items: center; gap: 8px; margin: 0 18px 14px; padding: 8px 10px; border-radius: 8px; font-size: 12px; background: var(--crit-soft); color: var(--crit-ink); }
+.mod-err svg.i { width: 14px; height: 14px; }
+.mod-tag {
+  display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 8px; border-radius: 999px; white-space: nowrap; font-size: 12px; font-weight: 580;
+  color: color-mix(in srgb, var(--accent) 80%, #000); background: color-mix(in srgb, var(--accent) 10%, #fff); border: 1px solid color-mix(in srgb, var(--accent) 28%, #fff);
+}
+.mod-tag svg.i { width: 13px; height: 13px; }
+.mini-btn { width: 100%; border: 0; background: none; text-align: left; cursor: pointer; border-radius: 8px; }
+.mini-btn:hover { background: var(--hover); }
+.qa-card .qa-grid { --accent-strong: color-mix(in srgb, var(--accent) 76%, #000); --accent-soft: color-mix(in srgb, var(--accent) 9%, #fff); --accent-line: color-mix(in srgb, var(--accent) 30%, #fff); }
+
+/* ---------- Print ---------- */
+@media print {
+  body { background: #fff; font-size: 12px; }
+  .app { max-width: none; padding: 0; }
+  .nav, .controls, .switcher, .pills, .card-actions, .tbl-toolbar .search, .tbl-toolbar .btn, .tbl-foot .pager, .qa-card, .attention .chips button svg { display: none !important; }
+  .nav { position: static; }
+  .card, .kpi, .mod-card { box-shadow: none; break-inside: avoid; }
+  .tbl-wrap { overflow: visible; }
+  .tbl th { position: static; }
+  .toasts, .tip, .overlay, .drawer { display: none !important; }
+}
 
 @media (max-width: 720px) {
   .app { padding: 0 16px 40px; }

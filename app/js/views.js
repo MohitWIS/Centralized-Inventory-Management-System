@@ -40,10 +40,37 @@
     return { pr: pr, rq: rq, showPR: !!forms.purchaseRequest || !!pr, showReq: !!forms.request || (!!rq && rq !== pr) };
   };
   K.openNew = function (ctx, formKey, reportKey) {
-    const f = (ctx.dash.forms || {})[formKey], r = K.report(ctx, reportKey);
+    const f = (ctx.dash.forms || {})[formKey], r = reportKey ? K.report(ctx, reportKey) : "";
     if (f) K.open("Form", f);
     else if (r) K.open("Report", r);
-    else ui.toast("Set dashboards." + ctx.key + ".forms." + formKey + " in js/config.js", "crit");
+    else ui.toast("Not set up in Creator yet — add the form's link name to dashboards." + ctx.key + ".forms." + formKey + " in js/config.js", "crit");
+  };
+
+  /* The seven Quick Actions of the requirement, for one module. dash/key/model may come from the
+     console (any module) or a module page. extra: {go(tab, sub)} for in-dashboard shortcuts. */
+  K.QUICK = [
+    { id: "newItem", icon: "plus", title: "New item", desc: "Add an item to the item master", form: "newItem" },
+    { id: "stockIn", icon: "arrowDown", tone: "good", title: "Stock in", desc: "Record stock received", form: "stockIn" },
+    { id: "issueItem", icon: "send", tone: "info", title: "Issue item", desc: "Issue items against requests", form: "issueItem", fallback: "requests" },
+    { id: "receiveBack", icon: "undo", tone: "violet", title: "Receive back", desc: "Items returned by employees", form: "receiveBack" },
+    { id: "request", icon: "filePlus", title: "Create request", desc: "Raise an item request", form: "request", fallback: "requests", primary: true },
+    { id: "purchaseRequest", icon: "cart", tone: "warn", title: "Create purchase request", desc: "Order stock from a vendor", form: "purchaseRequest", fallback: "purchaseRequests" },
+    { id: "reports", icon: "chart", tone: "neutral", title: "Generate reports", desc: "Consumption reports in Creator", form: "reports" }
+  ];
+  K.quickActionButtons = function (ctx) {
+    const forms = ctx.dash.forms || {};
+    return K.QUICK.map((q) => {
+      const form = forms[q.form];
+      const report = !form && q.fallback ? K.report(ctx, q.fallback) : "";
+      const ready = !!(form || report);
+      const desc = form ? q.desc : report ? q.desc + " · opens " + report : "Not set up in Creator yet";
+      const b = h("button", { class: "qa" + (q.primary && ready ? " primary" : "") + (ready ? "" : " off"), type: "button", title: ready ? "Opens in Zoho Creator" : "No form for this in the Creator app yet",
+        onclick: () => (ready ? K.openNew(ctx, q.form, q.fallback) : ui.toast(q.title + " isn't set up in Creator yet — add its form link name to dashboards." + ctx.key + ".forms." + q.form + " in js/config.js", "")) },
+        h("span", { class: "tone-tile tone-" + (q.tone || "accent") }, C.icon(q.icon)),
+        h("span", null, h("span", { class: "qa-title" }, q.title), h("span", { class: "qa-desc" }, desc)),
+        ready ? h("span", { class: "qa-ext" }, C.icon("external")) : null);
+      return b;
+    });
   };
   K.openBtn = (ctx, source) => {
     const r = K.report(ctx, source);
@@ -75,8 +102,8 @@
     ];
     if (o.location) cols.push({ key: "location", label: "Location", value: (r) => r.location });
     if (o.assignee) cols.push({ key: "assignedTo", label: "Assigned to", value: (r) => r.assignedTo, render: (r) => (r.assignedTo ? ui.person(r.assignedTo) : ui.badge("Unassigned", "warn", "user")) });
-    if (o.priority) cols.push({ key: "priority", label: "Priority", value: (r) => r.priorityRank, render: (r) => ui.priorityBadge(r.priority) });
-    if (o.waiting) cols.push({ key: "waiting", label: "Waiting", num: true, value: age, render: (r) => (r.date ? waitBadge(age(r)) : "—") });
+    if (o.priority) cols.push({ key: "priority", label: "Priority", value: (r) => r.priorityRank, text: (r) => r.priority, render: (r) => ui.priorityBadge(r.priority) });
+    if (o.waiting) cols.push({ key: "waiting", label: "Waiting (days)", num: true, value: age, render: (r) => (r.date ? waitBadge(age(r)) : "—") });
     if (o.turnaround) cols.push({ key: "tat", label: "Turnaround", num: true, value: K.tat, render: (r) => K.fmtDur(K.tat(r)) });
     cols.push({ key: "status", label: "Status", value: (r) => r.status, render: (r) => ui.statusBadge(r.group, r.status) });
     if (o.actions) cols.push(o.actions);
@@ -101,7 +128,7 @@
     cols.push(
       { key: "unitPrice", label: "Unit price", optional: true, money: true, value: (i) => i.unitPrice },
       { key: "value", label: "Value", optional: true, money: true, value: (i) => i.value },
-      { key: "status", label: "Status", value: (i) => STOCK_RANK[i.stockStatus], render: (i) => ui.stockBadge(i) });
+      { key: "status", label: "Status", value: (i) => STOCK_RANK[i.stockStatus], text: (i) => ui.STOCK_TEXT[i.stockStatus], render: (i) => ui.stockBadge(i) });
     return cols;
   };
   K.byReport = (m) => m.stockStatusFrom === "report"; // badges follow Creator's Status, not quantities
@@ -139,7 +166,9 @@
     const g = K.guard(ctx, "items", "low stock alerts");
     if (g) return g;
     const m = ctx.model;
-    const prItems = new Set(m.purchases.filter(M.isOpen).map((p) => U.norm(p.item)));
+    // items on an open purchase request — every line of it, not just the first item
+    const prItems = new Set();
+    m.purchases.filter(M.isOpen).forEach((p) => p.lines.forEach((l) => { if (l.item) prItems.add(U.norm(l.item)); }));
     const rows = m.items.filter((i) => i.stockStatus === "low" || i.stockStatus === "out").map((i) => {
       // only suggest quantities the numbers support (Creator's Status can list items without a stock figure)
       const stock = i.stock == null ? null : Math.max(i.stock, 0), lvl = i.reorderLevel;
@@ -155,8 +184,8 @@
       { key: "shortfall", label: "Shortfall", num: true, value: (i) => i.shortfall },
       { key: "suggest", label: "Suggested order", num: true, value: (i) => i.suggest, render: (i) => (i.suggest == null ? "—" : h("b", null, U.fmtNum(i.suggest) + (i.unit ? " " + i.unit : ""))) },
       { key: "estCost", label: "Est. cost", money: true, value: (i) => i.estCost },
-      { key: "hasPR", label: "Purchase request", value: (i) => (i.hasPR ? 0 : 1), render: (i) => (i.hasPR ? ui.badge("Raised", "info", "cart") : ui.badge("Not raised", "", "minus")) },
-      { key: "status", label: "Status", value: (i) => STOCK_RANK[i.stockStatus], render: (i) => ui.stockBadge(i) }
+      { key: "hasPR", label: "Purchase request", value: (i) => (i.hasPR ? 0 : 1), text: (i) => (i.hasPR ? "Raised" : "Not raised"), render: (i) => (i.hasPR ? ui.badge("Raised", "info", "cart") : ui.badge("Not raised", "", "minus")) },
+      { key: "status", label: "Status", value: (i) => STOCK_RANK[i.stockStatus], text: (i) => ui.STOCK_TEXT[i.stockStatus], render: (i) => ui.stockBadge(i) }
     ];
     return h("div", { class: "stack" },
       K.statusNote(ctx),
@@ -211,21 +240,16 @@
 
   /* ================= 1. Overview + 2. Quick actions ================= */
   function quickActions(ctx) {
-    const d = ctx.dash, m = ctx.model, na = K.newActions(ctx), pr = na.pr;
-    const qa = (o) => h("button", { class: "qa" + (o.primary ? " primary" : ""), type: "button", onclick: o.run, title: o.external ? "Opens in Zoho Creator" : null },
+    const m = ctx.model;
+    const qa = (o) => h("button", { class: "qa", type: "button", onclick: o.run },
       h("span", { class: "tone-tile tone-" + (o.tone || "accent") }, C.icon(o.icon)),
-      h("span", null, h("span", { class: "qa-title" }, o.title), h("span", { class: "qa-desc" }, o.desc)),
-      o.external ? h("span", { class: "qa-ext" }, C.icon("external")) : null);
+      h("span", null, h("span", { class: "qa-title" }, o.title), h("span", { class: "qa-desc" }, o.desc)));
     const low = m.items.filter((i) => i.stockStatus === "low" || i.stockStatus === "out").length;
     const pend = m.requests.filter((r) => r.group === "pending").length;
-    return ui.card({ title: "Quick actions", sub: "Raise purchase requests and jump to common tasks", body: h("div", { class: "qa-grid" }, [
-      na.showPR && qa({ primary: true, icon: "cart", title: "New purchase request", desc: "Raise a purchase request in Creator", external: true, run: () => K.openNew(ctx, "purchaseRequest", "purchaseRequests") }),
-      pr && qa({ icon: "clipboard", tone: "violet", title: "Purchase requests", desc: U.plural(m.purchases.filter(M.isOpen).length, "open request") + " · view all", external: true, run: () => K.open("Report", pr) }),
-      na.showReq && qa({ primary: !na.showPR, icon: "filePlus", title: "New " + d.label.toLowerCase() + " request", desc: "Submit an item request in Creator", external: true, run: () => K.openNew(ctx, "request", "requests") }),
-      !K.limited(ctx) && qa({ icon: "shield", tone: "warn", title: "Approve requests", desc: pend ? U.plural(pend, "request") + " waiting" : "Nothing waiting", run: () => ctx.go("requests", "approvals") }),
-      qa({ icon: "alert", tone: "crit", title: "Reorder list", desc: low ? U.plural(low, "item") + " need stock" : "All items stocked", run: () => ctx.go("inventory", "reorder") }),
-      qa({ icon: "book", tone: "info", title: "Stock ledger", desc: "Every stock movement", run: () => ctx.go("inventory", "ledger") })
-    ].filter(Boolean)) });
+    return ui.card({ title: "Quick actions", sub: "Open the Creator forms for everyday tasks, or jump to what needs attention", body: h("div", { class: "qa-grid" },
+      K.quickActionButtons(ctx),
+      !K.limited(ctx) ? qa({ icon: "shield", tone: "warn", title: "Approve requests", desc: pend ? U.plural(pend, "request") + " waiting" : "Nothing waiting", run: () => ctx.go("requests", "approvals") }) : null,
+      qa({ icon: "alert", tone: "crit", title: "Reorder list", desc: low ? U.plural(low, "item") + " need stock" : "All items stocked", run: () => ctx.go("inventory", "reorder") })) });
   }
 
   V.overview = function (ctx) {
@@ -273,7 +297,7 @@
     if (m.statusMismatches.length) alerts.push(["info", U.plural(m.statusMismatches.length, "stock status", "stock statuses") + " to check", () => ctx.go("inventory", "item-master")]);
     const expiring = m.items.filter((i) => i.expiry && (i.stock || 0) > 0 && U.daysBetween(new Date(), i.expiry) <= (cfg.nearExpiryDays || 30));
     if (expiring.length) alerts.push(["hourglass", U.plural(expiring.length, "item") + " expired or expiring", () => (ctx.key === "pantry" ? ctx.go("pantry", "expiry") : ctx.go("inventory", "current"))]);
-    const errs = Object.keys(S).map((k) => S[k]).filter((s) => s.state === "error");
+    const errs = Object.keys(S).filter((k) => !C.loader.OPTIONAL.has(k)).map((k) => S[k]).filter((s) => s.state === "error");
 
     const recent = m.requests.slice().sort((a, b) => (b.date || 0) - (a.date || 0)).slice(0, 5);
     const ratio = (i) => (i.stock == null ? 1e9 : i.stock / (i.reorderLevel || 1));
@@ -341,7 +365,7 @@
       { key: "unitPrice", label: "Unit price", optional: true, money: true, value: (i) => i.unitPrice },
       { key: "reorderLevel", label: "Reorder at", num: true, value: (i) => i.reorderLevel },
       { key: "stock", label: "In stock", num: true, value: (i) => i.stock },
-      { key: "status", label: "Status", value: (i) => STOCK_RANK[i.stockStatus], render: (i) => ui.stockBadge(i) }
+      { key: "status", label: "Status", value: (i) => STOCK_RANK[i.stockStatus], text: (i) => ui.STOCK_TEXT[i.stockStatus], render: (i) => ui.stockBadge(i) }
     ], ctx.model.items), rows: ctx.model.items, noun: "item", placeholder: "Search items…", sort: { key: "name", dir: "asc" }, pageSize: 15 })
   }));
 
@@ -349,6 +373,9 @@
     const g = K.guard(ctx, "items", "categories");
     if (g) return g;
     const m = ctx.model, hasVal = m.items.some((i) => i.value != null);
+    if (!m.items.some((i) => i.category || i.subCategory)) return ui.card({ body: ui.empty({ icon: "layers", title: "Items have no category in Creator yet",
+      text: ["Neither the stock report nor the item master has a category field. Add one (for example ", h("code", null, "Category"), " and ", h("code", null, "Sub_Category"),
+        ") to the item master form in Creator; it's picked up automatically, or put its link name in ", h("code", null, "config.fields.category"), "."] }) });
     const rows = [];
     U.group(m.items, (i) => i.category || "Uncategorised").forEach((cat) => U.group(cat.rows, (i) => i.subCategory || "General").forEach((sub) => rows.push({
       category: cat.key, sub: sub.key, items: sub.count, units: U.sum(sub.rows, (i) => Math.max(i.stock || 0, 0)),
@@ -523,8 +550,8 @@
     const latest = m.requests.slice().sort((a, b) => (b.date || 0) - (a.date || 0)).slice(0, 60);
     return h("div", { class: "stack" },
       ui.card({ title: "Create a new request", sub: "Requests are submitted in Zoho Creator and appear here after a refresh", body: h("div", { class: "qa-grid" },
-        na.showPR ? big("cart", "New purchase request", "Raise a purchase request in Zoho Creator", () => K.openNew(ctx, "purchaseRequest", "purchaseRequests"), true, true) : null,
-        na.showReq ? big("filePlus", "New " + d.label.toLowerCase() + " request", "Submit an item request in Zoho Creator", () => K.openNew(ctx, "request", "requests"), !na.showPR, true) : null,
+        na.showReq ? big("filePlus", "New " + d.label.toLowerCase() + " request", "Request items from the store", () => K.openNew(ctx, "request", "requests"), true, true) : null,
+        na.showPR ? big("cart", "New purchase request", "Order stock from a vendor", () => K.openNew(ctx, "purchaseRequest", "purchaseRequests"), !na.showReq, true) : null,
         big("refresh", "Refresh dashboard", "Load requests you have just submitted", ctx.refresh)) }),
       K.guard(ctx, "requests") || ui.card({ title: "Latest requests", sub: "Most recent first", flush: true, body: K.requestsTable(ctx, latest, { pageSize: 8 }) }));
   };
@@ -553,24 +580,39 @@
     const rows = m.requests.filter((r) => r.group === "pending");
     const limited = K.limited(ctx); // per-user fallback report: this viewer isn't an approver
     const can = cfg.enableApprovalActions && !!field && !limited;
-    async function act(r, approve) {
+    const busy = new Set(); // request ids being saved — stops a double click writing twice
+    async function act(r, approve, btns) {
+      if (busy.has(r.id)) return;
       const value = approve ? cfg.approvalValues.approve : cfg.approvalValues.reject;
       const ok = await ui.confirm({ title: (approve ? "Approve " : "Reject ") + r.no + "?", message: (r.item || "Request") + " · " + U.fmtNum(r.qty) + " for " + (r.employee || "—") + ". " + field + " will be set to “" + value + "”.", confirmLabel: approve ? "Approve" : "Reject", tone: approve ? null : "crit" });
-      if (!ok) return;
+      if (!ok || busy.has(r.id)) return;
+      busy.add(r.id);
+      btns.forEach((b) => { b.disabled = true; });
       try {
         const data = {};
         data[field] = value;
         await C.api.update(src.report, r.id, data);
         ui.toast(r.no + " marked " + value, "good");
         ctx.refresh();
-      } catch (e) { ui.toast("Could not update " + r.no + ": " + C.api.errorMessage(e), "crit"); }
+      } catch (e) {
+        ui.toast("Could not update " + r.no + ": " + C.api.errorMessage(e), "crit");
+        busy.delete(r.id);
+        btns.forEach((b) => { b.disabled = false; });
+      }
     }
-    const actions = can ? { key: "act", label: "Decision", sort: false, className: "actions", render: (r) => [
-      h("button", { class: "btn sm good", type: "button", onclick: () => act(r, true) }, C.icon("check"), "Approve"),
-      h("button", { class: "btn sm danger", type: "button", onclick: () => act(r, false) }, C.icon("x"), "Reject")] } : null;
+    const review = () => K.openNew(ctx, "approve", "requests");
+    const actions = can ? { key: "act", label: "Decision", sort: false, csv: false, className: "actions", render: (r) => {
+      const yes = h("button", { class: "btn sm good", type: "button" }, C.icon("check"), "Approve");
+      const no = h("button", { class: "btn sm danger", type: "button" }, C.icon("x"), "Reject");
+      yes.addEventListener("click", () => act(r, true, [yes, no]));
+      no.addEventListener("click", () => act(r, false, [yes, no]));
+      return [yes, no];
+    } } : !limited ? { key: "act", label: "", sort: false, csv: false, className: "actions",
+      render: () => h("button", { class: "btn sm", type: "button", onclick: review }, "Review in Creator", C.icon("external")) } : null;
     return h("div", { class: "stack" },
       limited ? K.limitedNote(ctx)
-      : !cfg.enableApprovalActions ? ui.note(["Approve / Reject buttons are switched off (", h("code", null, "enableApprovalActions"), " in js/config.js)."])
+      : !cfg.enableApprovalActions ? ui.note(["Approve, reject and issue requests in Zoho Creator — its approval forms update the stock ledger. ",
+        h("b", null, "Review in Creator"), " opens " + (((ctx.dash.forms || {}).approve) || src.report) + "."])
         : !field ? ui.note(["No status field was detected in " + src.report + ", so decisions can't be saved. Add its link name to ", h("code", null, "config.fields.status"), "."], "warn")
           : ui.note(["Approving sets ", h("b", null, field), " to “" + cfg.approvalValues.approve + "”, rejecting sets it to “" + cfg.approvalValues.reject + "”, directly on " + src.report + "."]),
       ui.card({ title: "Awaiting approval", sub: U.plural(rows.length, "request") + " · oldest first", flush: true,

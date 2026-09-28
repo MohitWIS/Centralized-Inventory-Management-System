@@ -44,7 +44,7 @@
     const s = STATUS_UI[group] || STATUS_UI.other;
     return ui.badge(label || C.model.GROUP_LABEL[group] || "—", s[0], s[1]);
   };
-  const STOCK_TEXT = { out: "Out of stock", low: "Low stock", ok: "In stock", unknown: "Unknown" };
+  const STOCK_TEXT = (ui.STOCK_TEXT = { out: "Out of stock", low: "Low stock", ok: "In stock", unknown: "Unknown" });
   // Accepts a status string, or an item — then flags items whose Creator status disagrees with the quantities.
   ui.stockBadge = function (arg) {
     const item = arg && typeof arg === "object" ? arg : null;
@@ -102,7 +102,7 @@
   };
 
   /* ---------- sortable, searchable, paged table ---------- */
-  // column: {key, label, num, money, date, value(row), render(row), strong, className, sort:false}
+  // column: {key, label, num, money, date, value(row), text(row), render(row), strong, className, sort:false, csv:false}
   function cmp(a, b) {
     if (a instanceof Date) a = +a;
     if (b instanceof Date) b = +b;
@@ -110,7 +110,9 @@
     return String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: "base" });
   }
   const blank = (v) => v == null || v === "" || (typeof v === "number" && isNaN(v));
+  // column.text(row) gives the readable label when value() is only a sort key (e.g. a status rank)
   function cellText(c, r) {
+    if (c.text) { const t = c.text(r); return blank(t) ? "—" : String(t); }
     const v = c.value ? c.value(r) : r[c.key];
     if (v instanceof Date) return U.fmtDate(v);
     if (typeof v === "number") return c.money ? U.fmtMoney(v) : U.fmtNum(v);
@@ -129,7 +131,10 @@
     };
     const countEl = h("span", { class: "tbl-count" });
     const input = o.search === false ? null : h("input", { type: "search", placeholder: o.placeholder || "Search…", "aria-label": "Search" });
-    const toolbar = h("div", { class: "tbl-toolbar" }, input ? h("label", { class: "search" }, C.icon("search"), input) : null, h("span", { class: "grow" }), countEl, o.toolbar || null);
+    let current = []; // the rows as filtered + sorted right now — what Export CSV writes
+    const exportBtn = o.exportable === false ? null : h("button", { class: "btn sm ghost", type: "button", title: "Download these rows as a CSV file (opens in Excel)",
+      onclick: () => ui.downloadCsv((o.title || o.noun || "export") + ".csv", cols.filter((c) => c.csv !== false && c.className !== "actions"), current) }, C.icon("download"), "Export CSV");
+    const toolbar = h("div", { class: "tbl-toolbar" }, input ? h("label", { class: "search" }, C.icon("search"), input) : null, h("span", { class: "grow" }), countEl, exportBtn, o.toolbar || null);
     const thead = h("thead"), tbody = h("tbody");
     const foot = h("div", { class: "tbl-foot" });
 
@@ -159,6 +164,7 @@
           });
         }
       }
+      current = rows;
       const pages = Math.max(1, Math.ceil(rows.length / pageSize));
       page = Math.min(page, pages - 1);
       const slice = rows.slice(page * pageSize, (page + 1) * pageSize);
@@ -183,6 +189,21 @@
     return h("div", null, toolbar, h("div", { class: "tbl-wrap" }, h("table", { class: "tbl" }, thead, tbody)), foot);
   };
 
+  /* CSV download of table rows, using each column's displayed text. */
+  ui.downloadCsv = function (filename, cols, rows) {
+    const esc = (v) => { const s = String(v == null ? "" : v); return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+    const lines = [cols.map((c) => esc(typeof c.label === "string" ? c.label : c.key)).join(",")];
+    for (const r of rows) lines.push(cols.map((c) => { const t = cellText(c, r); return esc(t === "—" ? "" : t); }).join(","));
+    const blob = new Blob(["﻿" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" }); // BOM so Excel reads ₹ and names correctly
+    const url = URL.createObjectURL(blob);
+    const a = h("a", { href: url, download: filename.replace(/[\\/:*?"<>|]+/g, "-") });
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+    ui.toast("Exported " + U.plural(rows.length, "row") + " to " + filename, "good");
+  };
+
   /* Card with a Chart / Table toggle — every chart has a table twin. */
   ui.chartCard = function (o) {
     const body = h("div", { class: "card-body" });
@@ -194,7 +215,7 @@
         body.appendChild(o.chart() || ui.empty({ icon: "chart", title: o.emptyTitle || "No data for this period", text: o.emptyText || null }));
       } else {
         body.className = "card-body flush-table";
-        body.appendChild(ui.table(Object.assign({ search: false, pageSize: 8 }, o.table)));
+        body.appendChild(ui.table(Object.assign({ search: false, pageSize: 8, title: o.title }, o.table)));
       }
     }
     paint();
