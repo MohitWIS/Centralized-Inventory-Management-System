@@ -70,7 +70,9 @@
   };
 
   ui.meter = (v, max, tone) => h("div", { class: "meter " + (tone || "") }, h("span", { style: { width: Math.max(0, Math.min(100, max ? (v / max) * 100 : 0)) + "%" } }));
-  ui.avatar = (name) => h("span", { class: "avatar", "aria-hidden": "true" }, U.initials(name));
+  // a stable colour per person: the same name always gets the same avatar tint (css .avatar.av-1 … av-6)
+  const avatarHue = (s) => { let x = 0; for (const ch of String(s || "")) x = (x * 31 + ch.charCodeAt(0)) >>> 0; return (x % 6) + 1; };
+  ui.avatar = (name) => h("span", { class: "avatar av-" + avatarHue(name), "aria-hidden": "true" }, U.initials(name));
   ui.person = (name, sub) => (name ? h("div", { class: "item-cell" }, ui.avatar(name), h("div", null, name, sub ? h("span", { class: "sub" }, sub) : null)) : "—");
   ui.cell = (title, sub) => h("div", null, title || "—", sub ? h("span", { class: "sub" }, sub) : null);
 

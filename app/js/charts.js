@@ -113,6 +113,12 @@
       const band = iw / Math.max(points.length, 1);
       const bw = Math.max(3, Math.min(24, band * 0.6));
       const s = svg("svg", { width: W, height: H, viewBox: "0 0 " + W + " " + H, role: "img", "aria-label": opts.label || "Column chart" });
+      // vertical gradient in the page colour (stop colours come from css .g-top / .g-bot)
+      const gid = "cg" + Math.random().toString(36).slice(2, 8);
+      const grad = svg("linearGradient", { id: gid, x1: 0, y1: 0, x2: 0, y2: 1 });
+      grad.appendChild(svg("stop", { offset: "0", class: "g-top" }));
+      grad.appendChild(svg("stop", { offset: "1", class: "g-bot" }));
+      const defs = svg("defs", {}); defs.appendChild(grad); s.appendChild(defs);
       ticks.forEach((t) => {
         const yy = Math.round(y(t)) + 0.5;
         s.appendChild(svg("line", { class: t === 0 ? "baseline" : "gridline", x1: padL, x2: W - padR, y1: yy, y2: yy }));
@@ -127,7 +133,7 @@
         const v = Math.max(0, p.value);
         const yy = y(v), hgt = padT + ih - yy;
         let col = null;
-        if (hgt > 0.5) { col = svg("path", { class: "col", d: colPath(cx - bw / 2, yy, bw, hgt, 4) }); s.appendChild(col); }
+        if (hgt > 0.5) { col = svg("path", { class: "col", fill: "url(#" + gid + ")", d: colPath(cx - bw / 2, yy, bw, hgt, 4) }); s.appendChild(col); }
         if (i % every === 0 || (i === points.length - 1 && (points.length - 1) % every > every / 2)) {
           s.appendChild(svg("text", { class: "tick", x: cx, y: H - 8, "text-anchor": "middle" }, p.label));
         }
