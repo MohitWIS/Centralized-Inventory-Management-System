@@ -222,6 +222,8 @@ main { transition: opacity .2s; }
 .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(212px, 100%), 1fr)); gap: 14px; }
 .kpis.five { grid-template-columns: repeat(5, minmax(0, 1fr)); }
 @media (max-width: 1180px) { .kpis.five { grid-template-columns: repeat(auto-fit, minmax(min(200px, 100%), 1fr)); } }
+/* nine tiles in a five-column grid: the last one spans two columns so the second row is full */
+@media (min-width: 1181px) { .kpis.five > .kpi:nth-child(9):last-child { grid-column: span 2; } }
 .kpi {
   --kpi: color-mix(in srgb, var(--accent) 86%, #000); --kpi-deep: var(--accent-deep);
   position: relative; display: grid; gap: 8px; padding: 18px 18px 16px; text-align: left; overflow: hidden; color: #fff; min-width: 0;
@@ -377,6 +379,7 @@ table.tbl { width: 100%; border-collapse: separate; border-spacing: 0; font-size
 .chart-box .hit { fill: transparent; cursor: default; }
 .chart-box .hit:hover + .col, .chart-box .col.on { filter: brightness(1.14); }
 .chart-box .cap { font-size: 11.5px; font-weight: 650; fill: var(--ink); }
+.chart-stack { display: flex; flex-direction: column; flex: 1 1 auto; gap: 12px; }
 .stackbar { display: flex; gap: 2px; height: 20px; border-radius: 7px; overflow: hidden; margin: 6px 0 14px; }
 .stackbar span { min-width: 3px; transition: filter .15s; }
 .stackbar span:hover { filter: brightness(1.1); }

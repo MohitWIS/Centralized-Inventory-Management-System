@@ -52,9 +52,7 @@
     { id: "newItem", icon: "plus", title: "New item", desc: "Add an item to the item master", form: "newItem" },
     { id: "stockIn", icon: "arrowDown", tone: "good", title: "Stock in", desc: "Record stock received", form: "stockIn" },
     { id: "issueItem", icon: "send", tone: "info", title: "Issue item", desc: "Issue items against requests", form: "issueItem", fallback: "requests" },
-    { id: "receiveBack", icon: "undo", tone: "violet", title: "Receive back", desc: "Items returned by employees", form: "receiveBack" },
-    { id: "request", icon: "filePlus", title: "Create request", desc: "Raise an item request", form: "request", fallback: "requests", primary: true },
-    { id: "purchaseRequest", icon: "cart", tone: "warn", title: "Create purchase request", desc: "Order stock from a vendor", form: "purchaseRequest", fallback: "purchaseRequests" },
+    { id: "purchaseRequest", icon: "cart", tone: "warn", title: "Create purchase request", desc: "Order stock from a vendor", form: "purchaseRequest", fallback: "purchaseRequests", primary: true },
     { id: "reports", icon: "chart", tone: "neutral", title: "Generate reports", desc: "Consumption reports in Creator", form: "reports" }
   ];
   K.quickActionButtons = function (ctx) {
@@ -197,7 +195,8 @@
   /* ---------- chart cards ---------- */
   K.groupCard = function (ctx, o) {
     const m = ctx.model, vf = K.valFn(m), fmt = K.fmtVal(m);
-    const lines = K.inPeriod(m.consumption, ctx.range);
+    const range = o.range || ctx.range; // a card can pin its own period (Top consumed items = this month)
+    const lines = K.inPeriod(m.consumption, range);
     const groups = U.group(lines, o.key, vf);
     const total = U.sum(groups, (g) => g.value);
     const rows = groups.map((g) => ({ label: g.key, value: g.value, qty: U.sum(g.rows, (c) => c.qty), count: g.count, share: total ? (g.value / total) * 100 : 0, sub: U.plural(g.count, "issue") }));
@@ -205,7 +204,7 @@
       .concat(m.hasValues ? [{ key: "value", label: "Value", money: true }] : [])
       .concat([{ key: "count", label: "Issues", num: true }, { key: "share", label: "Share", num: true, render: (r) => U.fmtPct(r.share) }]);
     return ui.chartCard({
-      title: o.title, sub: ctx.range.label + (m.hasValues ? " · by value" : " · by units"), actions: o.actions,
+      title: o.title, sub: range.label + (m.hasValues ? " · by value" : " · by units"), actions: o.actions,
       chart: () => CH.bars(rows, { format: fmt, limit: o.limit || 12, valueLabel: K.valLabel(m) }),
       table: { columns: cols, rows: rows, sort: { key: m.hasValues ? "value" : "qty", dir: "desc" }, noun: o.noun || "row", search: rows.length > 8 },
       emptyText: m.consumptionSource ? "Nothing was issued in this period." : "Consumption is calculated from completed requests or ledger issues."
@@ -228,6 +227,29 @@
   K.statusStack = function (rows, onClick) {
     const segs = ui.STATUS_ORDER.map((g) => ({ id: g, label: M.GROUP_LABEL[g], value: rows.filter((r) => r.group === g).length, color: ui.STATUS_COLOR[g] })).filter((s) => s.value > 0);
     return CH.stack(segs, { onClick: onClick });
+  };
+  // rows dated within the last n days (today included)
+  K.lastDays = (rows, days) => { const from = U.addDays(U.today(), -(days - 1)); return rows.filter((r) => r.date && r.date >= from); };
+  // batches (else items) with stock that expire within the next `near` days — already-expired ones are left out
+  K.expiringSoon = function (m, near) {
+    const t = U.today();
+    const src = m.sources.batches.state === "ok"
+      ? m.batches.map((b) => ({ name: b.item, sub: b.batch, stock: b.qty, unit: b.unit, expiry: b.expiry, value: b.value }))
+      : m.items.map((i) => ({ name: i.name, sub: i.subCategory || i.category, stock: i.stock, unit: i.unit, expiry: i.expiry, value: i.value }));
+    return src.filter((x) => x.expiry && (x.stock == null || x.stock > 0))
+      .map((x) => Object.assign(x, { days: U.daysBetween(t, x.expiry) }))
+      .filter((x) => x.days >= 0 && x.days <= near);
+  };
+  // requests by status, day by day: one stacked column per day for the last `days` days
+  K.dailyStatusChart = function (rows, days) {
+    days = days || 14;
+    const t = U.today(), keys = [];
+    for (let i = days - 1; i >= 0; i--) keys.push(U.dayKey(U.addDays(t, -i)));
+    const byDay = new Map(keys.map((k) => [k, {}]));
+    rows.forEach((r) => { const e = r.date && byDay.get(U.dayKey(r.date)); if (e) e[r.group] = (e[r.group] || 0) + 1; });
+    const points = keys.map((k) => ({ label: U.fmtShort(U.keyToDate(k)), full: U.fmtDate(U.keyToDate(k)), values: byDay.get(k) }));
+    const series = ui.STATUS_ORDER.map((g) => ({ id: g, label: M.GROUP_LABEL[g], color: ui.STATUS_COLOR[g] }));
+    return CH.stackedColumns(points, series, { label: "Requests by status per day", height: 210 });
   };
   K.statusCard = function (ctx, rows, title, sub) {
     const segs = ui.STATUS_ORDER.map((g) => ({ id: g, label: M.GROUP_LABEL[g], value: rows.filter((r) => r.group === g).length })).filter((s) => s.value > 0);
@@ -279,8 +301,6 @@
       ui.kpi({ label: "Out of stock", icon: "ban", tone: "crit", value: itemsOk ? U.fmtNum(out.length) : "—", sub: itemsOk ? (out.length ? "need immediate reorder" : "every item available") : connect("items"), onClick: () => ctx.go("inventory", "reorder") }),
       ui.kpi({ label: "Pending requests", icon: "clock", tone: "warn", value: reqOk ? U.fmtNum(pending.length) : "—", sub: reqOk ? "awaiting approval" : connect("requests"), onClick: () => ctx.go("requests", "pending") }),
       ui.kpi({ label: "Items issued", icon: "send", tone: "info", value: consOk ? U.fmtCompact(U.sum(cons, (c) => c.qty)) : "—", unit: consOk ? "units" : null, sub: consOk ? U.plural(cons.length, "issue") + " · " + lower : connect("requests"), onClick: () => ctx.go("inventory", "issue-return") }),
-      ui.kpi({ label: "Pending / overdue returns", icon: "undo", tone: m.overdueReturns.length ? "crit" : "neutral", value: m.returnsTracked ? U.fmtNum(m.pendingReturns.length) : "—",
-        sub: m.returnsTracked ? U.fmtNum(m.overdueReturns.length) + " overdue" : "no return dates recorded", onClick: () => ctx.go("inventory", "issue-return") }),
       ui.kpi({ label: "Pending purchase requests", icon: "cart", tone: "violet", value: S.purchaseRequests.state === "ok" ? U.fmtNum(openPR.length) : "—",
         sub: S.purchaseRequests.state === "ok" ? U.fmtNum(openPR.filter((p) => p.group === "pending").length) + " awaiting approval" : connect("purchaseRequests"), title: "Open " + K.report(ctx, "purchaseRequests") + " in Creator", onClick: () => K.open("Report", K.report(ctx, "purchaseRequests")) }),
       ui.kpi({ label: "Monthly consumption", icon: "trend", value: consOk ? U.fmtCompact(mtd) : "—", unit: consOk ? "units" : null, delta: consOk ? { pct: prev ? ((mtd - prev) / prev) * 100 : null, upIsGood: null, title: "vs the same days last month" } : null, sub: consOk ? "month to date" : connect("requests"), onClick: () => ctx.go(cTab[0], cTab[1]) }),
@@ -293,17 +313,21 @@
     if (out.length) alerts.push(["ban", U.plural(out.length, "item") + " out of stock", () => ctx.go("inventory", "reorder")]);
     if (low.length) alerts.push(["alert", U.plural(low.length, "item") + " running low", () => ctx.go("inventory", "reorder")]);
     if (pending.length && !K.limited(ctx)) alerts.push(["shield", U.plural(pending.length, "request") + " to approve", () => ctx.go("requests", "approvals")]);
-    if (m.overdueReturns.length) alerts.push(["undo", U.plural(m.overdueReturns.length, "return") + " overdue", () => ctx.go("inventory", "issue-return")]);
     if (m.statusMismatches.length) alerts.push(["info", U.plural(m.statusMismatches.length, "stock status", "stock statuses") + " to check", () => ctx.go("inventory", "item-master")]);
-    const expiring = m.items.filter((i) => i.expiry && (i.stock || 0) > 0 && U.daysBetween(new Date(), i.expiry) <= (cfg.nearExpiryDays || 30));
-    if (expiring.length) alerts.push(["hourglass", U.plural(expiring.length, "item") + " expired or expiring", () => (ctx.key === "pantry" ? ctx.go("pantry", "expiry") : ctx.go("inventory", "current"))]);
+    // expiry is tracked for Pantry only, and only items still to expire (not already expired)
+    if (ctx.key === "pantry") {
+      const near = cfg.nearExpiryDays || 15;
+      const soon = K.expiringSoon(m, near);
+      if (soon.length) alerts.push(["hourglass", U.plural(soon.length, m.sources.batches.state === "ok" ? "batch" : "item", m.sources.batches.state === "ok" ? "batches" : null) + " expiring in " + near + " days", () => ctx.go("pantry", "expiry")]);
+    }
     const errs = Object.keys(S).filter((k) => !C.loader.OPTIONAL.has(k)).map((k) => S[k]).filter((s) => s.state === "error");
 
     const recent = m.requests.slice().sort((a, b) => (b.date || 0) - (a.date || 0)).slice(0, 5);
     const ratio = (i) => (i.stock == null ? 1e9 : i.stock / (i.reorderLevel || 1));
     const lowList = out.concat(low).sort((a, b) => STOCK_RANK[a.stockStatus] - STOCK_RANK[b.stockStatus] || ratio(a) - ratio(b)).slice(0, 7);
-    const statusCard = ui.card({ title: "Requests by status", sub: r.label + " · " + U.plural(periodReq.length, "request"), actions: [K.linkBtn("Track", () => ctx.go("requests", "tracking"))],
-      body: h("div", null, K.statusStack(periodReq, () => ctx.go("requests", "tracking")) || ui.empty({ icon: "inbox", title: "No requests in this period" }),
+    const daily = K.lastDays(m.requests, 14);
+    const statusCard = ui.card({ title: "Requests by status", sub: "Last 14 days, day by day · " + U.plural(daily.length, "request"), actions: [K.linkBtn("Track", () => ctx.go("requests", "tracking"))],
+      body: h("div", null, K.dailyStatusChart(daily, 14) || ui.empty({ icon: "inbox", title: "No requests in the last 14 days" }),
         recent.length ? h("div", { class: "mini", style: { marginTop: "18px" } }, h("div", { class: "mini-sub", style: { marginBottom: "8px", fontWeight: 600 } }, "Latest requests"), recent.map(miniReq)) : null) });
     const lowCard = ui.card({ title: "Low stock watchlist", sub: itemsOk ? U.plural(low.length + out.length, "item") + (K.byReport(m) ? " marked Low / Out of Stock" : " at or below reorder level") : "Track stock by connecting the item master",
       actions: itemsOk ? [K.linkBtn("Reorder list", () => ctx.go("inventory", "reorder"))] : null,
@@ -321,7 +345,7 @@
       h("div", { class: "kpis five" }, tiles),
       quickActions(ctx),
       h("div", { class: "grid grid-main" }, K.trendCard(ctx, { title: "Consumption trend", sub: "Last 12 months · " + (m.hasValues ? "value issued" : "units issued"), rows: m.consumption, months: 12 }), statusCard),
-      h("div", { class: "grid grid-2" }, K.groupCard(ctx, { title: "Top consumed items", label: "Item", key: (c) => c.item, limit: 8, noun: "item" }), lowCard));
+      h("div", { class: "grid grid-2" }, K.groupCard(ctx, { title: "Top consumed items", label: "Item", key: (c) => c.item, limit: 8, noun: "item", range: U.periodRange("this_month") }), lowCard));
   };
 
   /* ================= 3. Inventory management ================= */
@@ -330,24 +354,28 @@
     { id: "categories", label: "Category & sub-category", icon: "layers" },
     { id: "stock-in-out", label: "Stock in / out", icon: "updown" },
     { id: "issue-return", label: "Item issue & return", icon: "repeat" },
-    { id: "adjustments", label: "Stock adjustment", icon: "sliders" },
     { id: "ledger", label: "Stock ledger", icon: "book" },
     { id: "current", label: "Current stock", icon: "warehouse" },
-    { id: "reorder", label: "Low stock & reorder", icon: "alert" },
-    { id: "valuation", label: "Stock valuation", icon: "rupee" }
+    { id: "reorder", label: "Low stock & reorder", icon: "alert" }
   ];
   const INV = {};
   const kindBadge = (t) => {
     const s = { opening: ["", "flag"], in: ["good", "arrowDown"], out: ["warn", "arrowUp"], issue: ["info", "send"], return: ["violet", "undo"], adjustment: ["crit", "sliders"] }[t.kind] || ["", "info"];
     return ui.badge(t.typeLabel, s[0], s[1]);
   };
-  K.ledgerCols = (withBalance) => [
+  // money: In / Out show the value (₹) of each movement, with the quantity in its own column
+  K.ledgerCols = (withBalance, money) => [
     { key: "date", label: "Date", date: true, value: (t) => t.date, render: (t) => U.fmtDate(t.date) },
     { key: "reference", label: "Reference", value: (t) => t.reference },
     { key: "item", label: "Item", strong: true, value: (t) => t.item },
     { key: "kind", label: "Type", value: (t) => t.typeLabel, render: kindBadge },
-    { key: "in", label: "In", num: true, value: (t) => (t.signed > 0 ? t.signed : null), render: (t) => (t.signed > 0 ? "+" + U.fmtNum(t.signed) : "") },
-    { key: "out", label: "Out", num: true, value: (t) => (t.signed < 0 ? -t.signed : null), render: (t) => (t.signed < 0 ? "−" + U.fmtNum(-t.signed) : "") },
+    money ? { key: "qty", label: "Qty", num: true, value: (t) => t.qty } : null,
+    money
+      ? { key: "in", label: "In (₹)", money: true, value: (t) => (t.signed > 0 ? t.amount : null), render: (t) => (t.signed > 0 ? (t.amount != null ? "+" + U.fmtMoney(t.amount) : "—") : "") }
+      : { key: "in", label: "In", num: true, value: (t) => (t.signed > 0 ? t.signed : null), render: (t) => (t.signed > 0 ? "+" + U.fmtNum(t.signed) : "") },
+    money
+      ? { key: "out", label: "Out (₹)", money: true, value: (t) => (t.signed < 0 ? t.amount : null), render: (t) => (t.signed < 0 ? (t.amount != null ? "−" + U.fmtMoney(t.amount) : "—") : "") }
+      : { key: "out", label: "Out", num: true, value: (t) => (t.signed < 0 ? -t.signed : null), render: (t) => (t.signed < 0 ? "−" + U.fmtNum(-t.signed) : "") },
     withBalance ? { key: "balance", label: "Balance", num: true, strong: true, value: (t) => t.runBalance } : null,
     { key: "party", label: "Party", value: (t) => t.employee || t.vendor || t.department, render: (t) => (t.employee ? ui.person(t.employee, t.department) : t.vendor || t.department || "—") },
     { key: "remarks", label: "Remarks", value: (t) => t.remarks }
@@ -401,19 +429,22 @@
     const m = ctx.model, r = ctx.range;
     const ins = m.txns.filter((t) => t.kind === "in"), outs = m.txns.filter((t) => t.kind === "out" || t.kind === "issue");
     const pIn = K.inPeriod(ins, r), pOut = K.inPeriod(outs, r);
-    const qin = U.sum(pIn, (t) => t.qty), qout = U.sum(pOut, (t) => t.qty);
-    const units = { valFn: (t) => t.qty, format: U.fmtNum, tickFormat: U.fmtCompact, valueHeader: "Units", countHeader: "Entries", countNoun: "entry", countMany: "entries" };
+    // amounts (₹) at the item-master unit price; entries without a price count as 0
+    const vin = U.sum(pIn, (t) => t.amount), vout = U.sum(pOut, (t) => t.amount), net = vin - vout;
+    const unpriced = pIn.concat(pOut).filter((t) => t.amount == null).length;
+    const money = { valFn: (t) => t.amount || 0, format: (n) => U.fmtMoney(n), tickFormat: (n) => U.fmtMoney(n, true), valueHeader: "Amount", countHeader: "Entries", countNoun: "entry", countMany: "entries" };
     return h("div", { class: "stack" },
+      unpriced ? ui.note([h("b", null, U.plural(unpriced, "movement")), " in this period have no unit price on the item master, so they count as ₹0 here."], "warn") : null,
       K.kpiRow([
-        ui.kpi({ label: "Stock in", value: U.fmtCompact(qin), unit: "units", icon: "arrowDown", tone: "good", sub: U.plural(pIn.length, "receipt") + " · " + r.label.toLowerCase() }),
-        ui.kpi({ label: "Stock out", value: U.fmtCompact(qout), unit: "units", icon: "arrowUp", tone: "warn", sub: U.plural(pOut.length, "issue") + " · " + r.label.toLowerCase() }),
-        ui.kpi({ label: "Net movement", value: (qin - qout > 0 ? "+" : "") + U.fmtCompact(qin - qout), unit: "units", icon: "updown", tone: qin >= qout ? "good" : "crit", sub: qin >= qout ? "stock building up" : "stock drawing down" }),
-        ui.kpi({ label: "Value received", value: U.fmtMoney(U.sum(pIn, (t) => t.amount), true), icon: "rupee", tone: "info", sub: r.label.toLowerCase() })
+        ui.kpi({ label: "Stock in", value: U.fmtMoney(vin, true), icon: "arrowDown", tone: "good", sub: U.plural(pIn.length, "receipt") + " · " + r.label.toLowerCase() }),
+        ui.kpi({ label: "Stock out", value: U.fmtMoney(vout, true), icon: "arrowUp", tone: "warn", sub: U.plural(pOut.length, "issue") + " · " + r.label.toLowerCase() }),
+        ui.kpi({ label: "Net movement", value: (net > 0 ? "+" : net < 0 ? "−" : "") + U.fmtMoney(Math.abs(net), true), icon: "updown", tone: net >= 0 ? "good" : "crit", sub: net >= 0 ? "stock value building up" : "stock value drawing down" }),
+        ui.kpi({ label: "Movements", value: U.fmtNum(pIn.length + pOut.length), icon: "repeat", tone: "info", sub: "entries · " + r.label.toLowerCase() })
       ]),
       h("div", { class: "grid grid-2" },
-        K.trendCard(ctx, Object.assign({ title: "Stock in", sub: "Units received · last 12 months", rows: ins }, units)),
-        K.trendCard(ctx, Object.assign({ title: "Stock out", sub: "Units issued or consumed · last 12 months", rows: outs }, units))),
-      ui.card({ title: "Movements", sub: r.label, flush: true, body: ui.table({ columns: K.ledgerCols(false), rows: pIn.concat(pOut), noun: "movement", placeholder: "Search item, reference, person…", sort: { key: "date", dir: "desc" } }) }));
+        K.trendCard(ctx, Object.assign({ title: "Stock in", sub: "Value received · last 12 months", rows: ins }, money)),
+        K.trendCard(ctx, Object.assign({ title: "Stock out", sub: "Value issued or consumed · last 12 months", rows: outs }, money))),
+      ui.card({ title: "Movements", sub: r.label + " · amounts at unit price", flush: true, body: ui.table({ title: "Stock movements", columns: K.ledgerCols(false, true), rows: pIn.concat(pOut), noun: "movement", placeholder: "Search item, reference, person…", sort: { key: "date", dir: "desc" } }) }));
   };
 
   INV["issue-return"] = function (ctx) {
@@ -452,27 +483,6 @@
       ], rows: issues, noun: "issue", sort: { key: "date", dir: "desc" } }) }));
   };
 
-  INV.adjustments = function (ctx) {
-    const g = K.guard(ctx, "transactions", "stock adjustments");
-    if (g) return g;
-    const m = ctx.model, r = ctx.range;
-    const adj = K.inPeriod(m.txns.filter((t) => t.kind === "adjustment"), r);
-    const net = U.sum(adj, (t) => t.signed);
-    const byReason = U.group(adj, (t) => t.typeLabel, (t) => Math.abs(t.signed)).map((x) => ({ label: x.key, value: x.value, sub: U.plural(x.count, "entry", "entries") }));
-    const byItem = U.group(adj, (t) => t.item, (t) => Math.abs(t.signed));
-    return h("div", { class: "stack" },
-      K.kpiRow([
-        ui.kpi({ label: "Adjustments", value: U.fmtNum(adj.length), icon: "sliders", sub: r.label.toLowerCase() }),
-        ui.kpi({ label: "Net change", value: (net > 0 ? "+" : "") + U.fmtNum(net), unit: "units", icon: "updown", tone: net < 0 ? "crit" : "good" }),
-        ui.kpi({ label: "Written-off value", value: U.fmtMoney(U.sum(adj.filter((t) => t.signed < 0), (t) => t.amount), true), icon: "rupee", tone: "warn", sub: "damaged, expired or lost" }),
-        ui.kpi({ label: "Most adjusted item", value: byItem[0] ? byItem[0].key : "—", icon: "package", tone: "violet", sub: byItem[0] ? U.fmtNum(byItem[0].value) + " units" : "" })
-      ]),
-      h("div", { class: "grid grid-main" },
-        ui.card({ title: "Adjustment entries", sub: r.label, flush: true, body: ui.table({ columns: K.ledgerCols(false), rows: adj, noun: "entry", placeholder: "Search…", sort: { key: "date", dir: "desc" }, pageSize: 8 }) }),
-        ui.chartCard({ title: "By reason", sub: "Units adjusted", chart: () => CH.bars(byReason, { format: U.fmtNum, valueLabel: "units" }),
-          table: { columns: [{ key: "label", label: "Reason", strong: true }, { key: "value", label: "Units", num: true }], rows: byReason, sort: { key: "value", dir: "desc" }, noun: "reason", search: false }, emptyText: "No adjustments in this period." })));
-  };
-
   INV.ledger = function (ctx) {
     const g = K.guard(ctx, "transactions", "the stock ledger");
     if (g) return g;
@@ -492,41 +502,13 @@
   INV.current = K.currentStock;
   INV.reorder = K.reorderList;
 
-  INV.valuation = function (ctx) {
-    const g = K.guard(ctx, "items", "stock valuation");
-    if (g) return g;
-    const m = ctx.model;
-    const priced = m.items.filter((i) => i.value != null);
-    if (!priced.length) return ui.card({ body: ui.empty({ icon: "rupee", title: "No unit prices on the item master", text: "Stock valuation needs a unit price field (for example Unit_Price) next to current stock." }) });
-    const total = U.sum(priced, (i) => i.value);
-    const bySub = U.group(priced, (i) => i.subCategory || i.category || "Uncategorised", (i) => i.value).map((x) => ({ label: x.key, value: x.value, sub: U.plural(x.count, "item") }));
-    const top = priced.slice().sort((a, b) => b.value - a.value).map((i) => ({ label: i.name, value: i.value, sub: U.fmtNum(i.stock) + " × " + U.fmtMoney(i.unitPrice) }));
-    return h("div", { class: "stack" },
-      K.kpiRow([
-        ui.kpi({ label: "Total stock value", value: U.fmtMoney(total, true), icon: "rupee", tone: "good", sub: "at unit price" }),
-        ui.kpi({ label: "Items valued", value: U.fmtNum(priced.length), icon: "package", sub: "of " + U.fmtNum(m.items.length) + " items" }),
-        ui.kpi({ label: "Average per item", value: U.fmtMoney(total / priced.length, true), icon: "chart", tone: "info" }),
-        ui.kpi({ label: "Largest share", value: bySub[0] ? bySub[0].label : "—", icon: "award", tone: "violet", sub: bySub[0] ? U.fmtPct((bySub[0].value / total) * 100) + " of stock value" : "" })
-      ]),
-      h("div", { class: "grid grid-2" },
-        ui.chartCard({ title: "Value by sub-category", chart: () => CH.bars(bySub, { format: (n) => U.fmtMoney(n), limit: 10 }), table: { columns: [{ key: "label", label: "Sub-category", strong: true }, { key: "value", label: "Value", money: true }], rows: bySub, sort: { key: "value", dir: "desc" }, search: false } }),
-        ui.chartCard({ title: "Most valuable stock", chart: () => CH.bars(top, { format: (n) => U.fmtMoney(n), limit: 10 }), table: { columns: [{ key: "label", label: "Item", strong: true }, { key: "value", label: "Value", money: true }], rows: top, sort: { key: "value", dir: "desc" } } })),
-      ui.card({ title: "Valuation by item", flush: true, body: ui.table({ columns: [
-        { key: "name", label: "Item", strong: true, value: (i) => i.name, search: (i) => [i.code, i.brand, i.category, i.subCategory].join(" "), render: (i) => ui.cell(i.name, i.subCategory || i.category || i.brand) },
-        { key: "stock", label: "In stock", num: true, value: (i) => i.stock },
-        { key: "unitPrice", label: "Unit price", money: true, value: (i) => i.unitPrice },
-        { key: "value", label: "Value", money: true, strong: true, value: (i) => i.value },
-        { key: "share", label: "Share", num: true, value: (i) => i.value / total, render: (i) => U.fmtPct((i.value / total) * 100) }
-      ], rows: priced, noun: "item", sort: { key: "value", dir: "desc" } }) }));
-  };
-
   V.inventory = function (ctx) {
     const m = ctx.model;
     const sub = INV[ctx.sub("inventory")] ? ctx.sub("inventory") : "item-master";
     const alerts = m.items.filter((i) => i.stockStatus === "low" || i.stockStatus === "out").length;
     const tabs = INV_TABS.map((t) => Object.assign({}, t, t.id === "reorder" && alerts ? { count: alerts } : {}));
     return h("div", null,
-      ui.sectionHead("Inventory management", ctx.dash.label + " items, stock movement and valuation"),
+      ui.sectionHead("Inventory management", ctx.dash.label + " items, stock movement and current stock"),
       ui.pills(tabs, sub, (id) => ctx.setSub("inventory", id)),
       INV[sub](ctx));
   };

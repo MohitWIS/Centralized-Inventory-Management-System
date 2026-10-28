@@ -154,6 +154,66 @@
     return box;
   };
 
+  /* ---------- stacked columns: one column per day, one segment per series ---------- */
+  // points: [{label, full, values: {<series id>: n}}]  series: [{id, label, color}] in stacking order
+  CH.stackedColumns = function (points, series, opts) {
+    opts = opts || {};
+    const H0 = opts.height || 220;
+    const tot = (p) => series.reduce((s, x) => s + (p.values[x.id] || 0), 0);
+    if (!points.some((p) => tot(p) > 0)) return null;
+    const box = h("div", { class: "chart-box", style: { minHeight: H0 + "px" } });
+    let lastW = 0, lastH = 0;
+    function draw() {
+      const W = Math.round(box.clientWidth), H = Math.max(H0, Math.round(box.clientHeight));
+      if (!W || (W === lastW && H === lastH)) return;
+      lastW = W; lastH = H;
+      C.clear(box);
+      const ticks = niceTicks(Math.max(...points.map(tot)), 4), top = ticks[ticks.length - 1] || 1;
+      const padL = Math.max(28, Math.max(...ticks.map((t) => U.fmtCompact(t).length)) * 6.6 + 12), padR = 6, padT = 12, padB = 26;
+      const iw = W - padL - padR, ih = H - padT - padB, y = (v) => padT + ih - (v / top) * ih;
+      const band = iw / points.length, bw = Math.max(4, Math.min(24, band * 0.62));
+      const s = svg("svg", { width: W, height: H, viewBox: "0 0 " + W + " " + H, role: "img", "aria-label": opts.label || "Stacked column chart" });
+      ticks.forEach((t) => {
+        const yy = Math.round(y(t)) + 0.5;
+        s.appendChild(svg("line", { class: t === 0 ? "baseline" : "gridline", x1: padL, x2: W - padR, y1: yy, y2: yy }));
+        s.appendChild(svg("text", { class: "tick", x: padL - 8, y: yy + 4, "text-anchor": "end" }, U.fmtCompact(t)));
+      });
+      const every = Math.max(1, Math.ceil(points.length / Math.max(1, Math.floor(iw / 46))));
+      points.forEach((p, i) => {
+        const x = padL + band * i + (band - bw) / 2;
+        const segs = series.filter((sr) => p.values[sr.id] > 0);
+        let base = 0;
+        segs.forEach((sr, j) => {
+          const v = p.values[sr.id], y0 = y(base), y1 = y(base + v);
+          const hgt = y0 - y1 - (j > 0 ? 2 : 0); // 2px surface gap between segments
+          base += v;
+          if (hgt <= 0.3) return;
+          s.appendChild(j === segs.length - 1
+            ? svg("path", { d: colPath(x, y1, bw, hgt, 3), fill: sr.color })
+            : svg("rect", { x: x, y: y1, width: bw, height: hgt, fill: sr.color }));
+        });
+        // every n-th day, plus the last day when it isn't crowding the previous label
+        if (i % every === 0 || (i === points.length - 1 && i % every > every / 2)) s.appendChild(svg("text", { class: "tick", x: x + bw / 2, y: H - 8, "text-anchor": "middle" }, p.label));
+        const hit = svg("rect", { class: "hit", x: padL + band * i, y: padT, width: band, height: ih, tabindex: "0" });
+        const show = (e) => CH.tip.show(e, p.full || p.label, segs.map((sr) => ({ value: U.fmtNum(p.values[sr.id]), label: sr.label, color: sr.color }))
+          .concat([{ value: U.fmtNum(tot(p)), label: tot(p) ? "in total" : "no requests" }]));
+        hit.addEventListener("pointermove", show);
+        hit.addEventListener("pointerleave", CH.tip.hide);
+        hit.addEventListener("focus", show);
+        hit.addEventListener("blur", CH.tip.hide);
+        s.appendChild(hit);
+      });
+      box.appendChild(s);
+    }
+    if (window.ResizeObserver) new ResizeObserver(draw).observe(box);
+    else setTimeout(draw, 0);
+    const legend = h("div", { class: "legend" }, series.map((sr) => {
+      const n = points.reduce((a, p) => a + (p.values[sr.id] || 0), 0);
+      return n ? h("span", { class: "key" }, h("span", { class: "sw", style: { background: sr.color } }), sr.label, h("b", null, U.fmtNum(n))) : null;
+    }));
+    return h("div", { class: "chart-stack" }, box, legend);
+  };
+
   /* ---------- 100% stacked bar + legend ---------- */
   // segs: [{label, value, color}]
   CH.stack = function (segs, opts) {

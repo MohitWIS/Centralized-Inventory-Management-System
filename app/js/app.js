@@ -94,7 +94,7 @@
     const srcBtn = h("button", { class: "btn", type: "button" }, C.icon("database"), "Data sources");
     srcBtn.addEventListener("click", openSources);
     state.updatedEl = h("span", { class: "updated" });
-    const switcher = cfg.showDashboardSwitcher ? h("nav", { class: "switcher", "aria-label": "Dashboards" },
+    const switcher = cfg.showDashboardSwitcher && !cfg.dashboards[cfg.onlyDashboard] ? h("nav", { class: "switcher", "aria-label": "Dashboards" },
       h("a", { href: C.api.pageHref("widget.html") }, C.icon("grid"), "Console"),
       Object.keys(cfg.dashboards).map((k) => {
         const d = cfg.dashboards[k];
@@ -213,6 +213,8 @@
   /* ---------- boot ---------- */
   function boot() {
     const key = document.body.getAttribute("data-dashboard");
+    const only = C.config.dashboards[C.config.onlyDashboard] ? C.config.onlyDashboard : "";
+    if (only && key !== only) { location.replace(C.api.pageHref(C.config.dashboards[only].page) + location.hash); return; } // single-store mode
     const dash = C.config.dashboards[key];
     if (!dash) { document.body.textContent = "Unknown dashboard: " + key; return; }
     state.key = key;

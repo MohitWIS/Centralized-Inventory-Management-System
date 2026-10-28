@@ -5,7 +5,8 @@
   const V = (C.views = C.views || {});
 
   function moduleView(ctx, sec, title, text, tabs, handlers, def) {
-    const sub = handlers[ctx.sub(sec)] ? ctx.sub(sec) : def;
+    // only sub-tabs this store shows (an old link to a removed tab falls back to the default)
+    const sub = handlers[ctx.sub(sec)] && tabs.some((t) => t.id === ctx.sub(sec)) ? ctx.sub(sec) : def;
     return h("div", null, ui.sectionHead(title, text), ui.pills(tabs, sub, (id) => ctx.setSub(sec, id)), handlers[sub](ctx));
   }
   const need = (ctx, what) => K.guard(ctx, "requests", what);
@@ -211,7 +212,6 @@
     { id: "stock", label: "Pantry stock", icon: "warehouse" },
     { id: "consumption", label: "Daily / monthly consumption", icon: "trend" },
     { id: "items", label: "Item-wise consumption", icon: "package" },
-    { id: "departments", label: "Department-wise consumption", icon: "building" },
     { id: "alerts", label: "Low stock alerts", icon: "bell" },
     { id: "expiry", label: "Expiry tracking", icon: "hourglass" },
     { id: "expense", label: "Expense tracking", icon: "wallet" }
@@ -250,35 +250,29 @@
       K.trendCard(ctx, { title: "Monthly consumption", sub: "Last 12 months · " + K.valLabel(m), rows: m.consumption, months: 12 }));
   };
 
+  // Pantry only: stock that is still good but expires within the next nearExpiryDays (15) days.
+  // Items that have already expired are left out.
   PN.expiry = function (ctx) {
-    const m = ctx.model, near = ctx.cfg.nearExpiryDays || 30, t = U.today();
-    // batch-wise when a batch report is connected (one row per batch still in stock), else the item master's expiry
+    const m = ctx.model, near = ctx.cfg.nearExpiryDays || 15;
     const byBatch = m.sources.batches.state === "ok";
     if (!byBatch) { const g = K.guard(ctx, "items", "expiry tracking"); if (g) return g; }
-    const rows = byBatch
-      ? m.batches.filter((b) => b.expiry && (b.qty == null || b.qty > 0)).map((b) => ({ name: b.item, sub: b.batch, stock: b.qty, unit: b.unit, expiry: b.expiry, value: b.value, days: U.daysBetween(t, b.expiry) }))
-      : m.items.filter((i) => i.expiry).map((i) => ({ name: i.name, sub: i.subCategory || i.category, stock: i.stock, unit: i.unit, expiry: i.expiry, value: i.value, days: U.daysBetween(t, i.expiry) }));
-    if (!rows.length) return ui.card({ body: ui.empty({ icon: "hourglass", title: byBatch ? "No batches with stock have an expiry date" : "No expiry dates on the item master",
-      text: byBatch ? "Batches in " + m.sources.batches.report + " with remaining stock and an expiry date appear here." : ["Add an expiry date field (for example ", h("code", null, "Expiry_Date"), ") to the item master, or connect a batch report in ", h("code", null, "dashboards." + ctx.key + ".reports.batches"), "."] }) });
-    const expired = rows.filter((i) => i.days < 0), soon = rows.filter((i) => i.days >= 0 && i.days <= near);
-    const badge = (i) => (i.days < 0 ? ui.badge("Expired " + U.plural(-i.days, "day") + " ago", "crit", "ban")
-      : i.days === 0 ? ui.badge("Expires today", "crit", "alert")
-        : ui.badge(U.plural(i.days, "day") + " left", i.days <= 7 ? "warn" : i.days <= near ? "info" : "good", i.days <= near ? "hourglass" : "check"));
+    const rows = K.expiringSoon(m, near);
+    const badge = (i) => (i.days === 0 ? ui.badge("Expires today", "crit", "alert")
+      : ui.badge(U.plural(i.days, "day") + " left", i.days <= 7 ? "warn" : "info", "hourglass"));
     return h("div", { class: "stack" },
       K.kpiRow([
-        ui.kpi({ label: "Expired", value: U.fmtNum(expired.length), icon: "ban", tone: "crit", sub: "remove from stock" }),
-        ui.kpi({ label: "Expiring in 7 days", value: U.fmtNum(soon.filter((i) => i.days <= 7).length), icon: "alert", tone: "warn" }),
-        ui.kpi({ label: "Expiring in " + near + " days", value: U.fmtNum(soon.length), icon: "hourglass", tone: "info" }),
-        ui.kpi({ label: "Value at risk", value: U.fmtMoney(U.sum(expired.concat(soon), (i) => i.value) || null, true), icon: "rupee", tone: "violet", sub: "expired + near-expiry stock" })
+        ui.kpi({ label: "Expiring in 7 days", value: U.fmtNum(rows.filter((i) => i.days <= 7).length), icon: "alert", tone: "warn", sub: byBatch ? "batches" : "items" }),
+        ui.kpi({ label: "Expiring in " + near + " days", value: U.fmtNum(rows.length), icon: "hourglass", tone: "info", sub: byBatch ? "batches" : "items" }),
+        ui.kpi({ label: "Value at risk", value: rows.some((i) => i.value != null) ? U.fmtMoney(U.sum(rows, (i) => i.value), true) : "—", icon: "rupee", tone: "violet", sub: "stock expiring in " + near + " days" })
       ]),
-      ui.card({ title: "Expiry tracking", sub: (byBatch ? "Batches in stock" : "Items") + " with an expiry date, soonest first", flush: true, body: ui.table({ title: "Expiry tracking", columns: [
+      ui.card({ title: "Expiring in the next " + near + " days", sub: (byBatch ? "Batches in stock" : "Items") + ", soonest first", flush: true, body: ui.table({ title: "Expiring in " + near + " days", columns: [
         { key: "name", label: "Item", strong: true, value: (i) => i.name, search: (i) => i.sub, render: (i) => ui.cell(i.name, i.sub) },
         byBatch ? { key: "sub", label: "Batch", value: (i) => i.sub } : null,
         { key: "stock", label: "In stock", num: true, value: (i) => i.stock, text: (i) => (i.stock == null ? "" : U.fmtNum(i.stock) + (i.unit ? " " + i.unit : "")) },
         { key: "expiry", label: "Expiry date", date: true, value: (i) => i.expiry, render: (i) => U.fmtDate(i.expiry) },
-        { key: "days", label: "Status", value: (i) => i.days, text: (i) => (i.days < 0 ? "Expired " + U.plural(-i.days, "day") + " ago" : i.days === 0 ? "Expires today" : U.plural(i.days, "day") + " left"), render: badge },
+        { key: "days", label: "Status", value: (i) => i.days, text: (i) => (i.days === 0 ? "Expires today" : U.plural(i.days, "day") + " left"), render: badge },
         { key: "value", label: "Stock value", money: true, value: (i) => i.value }
-      ].filter(Boolean), rows: rows, noun: byBatch ? "batch" : "item", sort: { key: "days", dir: "asc" } }) }));
+      ].filter(Boolean), rows: rows, noun: byBatch ? "batch" : "item", sort: { key: "days", dir: "asc" }, empty: "Nothing expires in the next " + near + " days." }) }));
   };
 
   PN.expense = function (ctx) {

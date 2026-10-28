@@ -33,7 +33,7 @@ CIMS.config = {
   dateOrder: "DMY",            // only used for numeric dates like 11/09/2026 ("DMY" or "MDY")
   fiscalYearStartMonth: 4,     // April
   defaultPeriod: "this_fy",    // this_month | last_30 | last_90 | this_quarter | this_fy | last_12m | all
-  nearExpiryDays: 30,
+  nearExpiryDays: 15,          // Pantry expiry window (expiry is tracked for Pantry only)
   // Stock status badges: "report" follows the stock report's own status field (e.g. Status =
   // "In Stock") whenever it has one, falling back to quantities; "numbers" always compares on-hand
   // stock with the reorder level (0 or less = out of stock, at or below the reorder level = low).
@@ -48,6 +48,9 @@ CIMS.config = {
   consumptionFrom: "auto",
 
   showDashboardSwitcher: true,
+  // Show the client a single store: "housekeeping", "pantry" or "stationery". The switcher is hidden and
+  // the console and the other store pages redirect to this one. Blank = everything is available.
+  onlyDashboard: "",
   // Approve / Reject buttons write the status value below straight to the request record. Off here:
   // this app approves and issues through its own Creator forms, whose workflows update stock — so
   // the dashboard opens the request in Creator instead.

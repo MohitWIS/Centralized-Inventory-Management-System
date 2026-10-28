@@ -128,7 +128,8 @@
   U.fmtShort = (d) => (d ? d.toLocaleDateString(cfg().locale || "en-IN", { day: "numeric", month: "short" }) : "—");
   U.fmtTime = (d) => (d ? d.toLocaleTimeString(cfg().locale || "en-IN", { hour: "numeric", minute: "2-digit" }) : "");
   U.monthLabel = (key, withYear) => U.keyToDate(key).toLocaleDateString(cfg().locale || "en-IN", withYear ? { month: "short", year: "numeric" } : { month: "short" });
-  U.plural = (n, one, many) => U.fmtNum(n) + " " + (n === 1 ? one : many || (/[^aeiou]y$/i.test(one) ? one.slice(0, -1) + "ies" : one + "s"));
+  U.plural = (n, one, many) => U.fmtNum(n) + " " + (n === 1 ? one : many ||
+    (/[^aeiou]y$/i.test(one) ? one.slice(0, -1) + "ies" : /(s|x|z|ch|sh)$/i.test(one) ? one + "es" : one + "s")); // batch -> batches
   U.initials = (name) => String(name || "?").split(/[\s._@-]+/).filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join("") || "?";
 
   /* ---------- aggregation ---------- */

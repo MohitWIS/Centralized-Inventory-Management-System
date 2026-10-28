@@ -105,7 +105,6 @@
     const prev = U.sum(cons.filter((c) => c.date && c.date >= pStart && c.date <= pEnd), val);
     const fmtV = (n) => (money ? U.fmtMoney(n, true) : U.fmtCompact(n));
     const itemsOk = loaded().some((k) => ok(k, "items"));
-    const returns = loaded().some((k) => state.models[k].returnsTracked);
     const hk = state.models.housekeeping, ps = ["pantry", "stationery"].filter((k) => state.models[k]);
     const psCons = [].concat.apply([], ps.map((k) => inP(state.models[k].consumption)));
     const psVal = (c) => (ps.some((k) => state.models[k].hasValues) ? c.value || 0 : c.qty || 0);
@@ -121,8 +120,6 @@
       ui.kpi({ label: "Out of stock", icon: "ban", tone: "crit", value: U.fmtNum(sumBy(out)), sub: perModule(out) }),
       ui.kpi({ label: "Pending requests", icon: "clock", tone: "warn", value: U.fmtNum(sumBy(pend)), sub: perModule(pend) }),
       ui.kpi({ label: "Items issued", icon: "send", tone: "info", value: U.fmtCompact(sumBy(issued)), unit: "units", sub: lower + " · " + perModule(issued, U.fmtCompact) }),
-      ui.kpi({ label: "Pending / overdue returns", icon: "undo", tone: "neutral", value: returns ? U.fmtNum(sumBy((m) => m.pendingReturns.length)) : "—",
-        sub: returns ? U.fmtNum(sumBy((m) => m.overdueReturns.length)) + " overdue" : "returns aren't tracked in Creator yet" }),
       ui.kpi({ label: "Pending purchase requests", icon: "cart", tone: "violet", value: U.fmtNum(sumBy(openPR)), sub: perModule(openPR) }),
       ui.kpi({ label: "Monthly consumption", icon: "trend", value: fmtV(mtd), unit: money ? null : "units", sub: "month to date",
         delta: { pct: prev ? ((mtd - prev) / prev) * 100 : null, upIsGood: null, title: "vs the same days last month" } }),
@@ -135,17 +132,16 @@
 
   function attention() {
     const chips = [];
-    const near = cfg().nearExpiryDays || 30;
+    const near = cfg().nearExpiryDays || 15;
     loaded().forEach((k) => {
       const m = state.models[k], L = dashOf(k).label;
       const out = m.items.filter((i) => i.stockStatus === "out").length, low = m.items.filter((i) => i.stockStatus === "low").length;
       const pend = m.requests.filter((r) => r.group === "pending").length;
-      const exp = m.batches.filter((b) => b.expiry && b.qty > 0 && U.daysBetween(new Date(), b.expiry) <= near).length ||
-        m.items.filter((i) => i.expiry && (i.stock || 0) > 0 && U.daysBetween(new Date(), i.expiry) <= near).length;
+      const exp = k === "pantry" ? K.expiringSoon(m, near).length : 0; // expiry is tracked for Pantry only
       if (out) chips.push(["ban", L + ": " + U.plural(out, "item") + " out of stock", () => goTo(k, "inventory", "reorder")]);
       if (low) chips.push(["alert", L + ": " + U.plural(low, "item") + " running low", () => goTo(k, "inventory", "reorder")]);
       if (pend) chips.push(["shield", L + ": " + U.plural(pend, "request") + " to approve", () => goTo(k, "requests", "approvals")]);
-      if (exp) chips.push(["hourglass", L + ": " + U.plural(exp, k === "pantry" ? "batch" : "item", k === "pantry" ? "batches" : null) + " expired or expiring", () => goTo(k, k === "pantry" ? "pantry" : "inventory", k === "pantry" ? "expiry" : "current")]);
+      if (exp) chips.push(["hourglass", L + ": " + U.plural(exp, m.sources.batches.state === "ok" ? "batch" : "item", m.sources.batches.state === "ok" ? "batches" : null) + " expiring in " + near + " days", () => goTo(k, "pantry", "expiry")]);
     });
     if (!chips.length) return null;
     return h("div", { class: "attention" }, h("strong", null, C.icon("bell"), "Needs attention"),
@@ -202,11 +198,11 @@
   }
 
   function statusCard(range) {
-    const rows = all((m) => K.inPeriod(m.requests, range));
-    const stack = K.statusStack(rows, null);
+    const rows = all((m) => K.lastDays(m.requests, 14));
+    const chart = K.dailyStatusChart(rows, 14);
     const byMod = loaded().map((k) => { const r = rows.filter((x) => x._k === k); return { k: k, total: r.length, pending: r.filter((x) => x.group === "pending").length, done: r.filter((x) => x.group === "completed").length }; });
-    return ui.card({ title: "Requests by status", sub: range.label + " · " + U.plural(rows.length, "request") + " across all stores",
-      body: h("div", null, stack || ui.empty({ icon: "inbox", title: "No requests in this period" }),
+    return ui.card({ title: "Requests by status", sub: "Last 14 days, day by day · " + U.plural(rows.length, "request") + " across all stores",
+      body: h("div", null, chart || ui.empty({ icon: "inbox", title: "No requests in the last 14 days" }),
         h("div", { class: "mini", style: { marginTop: "16px" } }, byMod.map((b) => h("button", { class: "mini-row mini-btn", type: "button", onclick: () => goTo(b.k, "requests", "tracking") },
           h("div", null, tag(b.k)), h("div", { class: "mini-sub" }, U.plural(b.total, "request") + " · " + U.fmtNum(b.pending) + " pending · " + U.fmtNum(b.done) + " issued"))))) });
   }
@@ -225,18 +221,17 @@
   }
 
   function expiring() {
-    const near = cfg().nearExpiryDays || 30, t = U.today();
-    const rows = all((m) => m.batches.filter((b) => b.expiry && b.qty > 0).map((b) => Object.assign({}, b, { days: U.daysBetween(t, b.expiry) })))
-      .filter((b) => b.days <= near);
-    const badge = (b) => (b.days < 0 ? ui.badge("Expired " + U.plural(-b.days, "day") + " ago", "crit", "ban") : b.days === 0 ? ui.badge("Today", "crit", "alert") : ui.badge(U.plural(b.days, "day") + " left", b.days <= 7 ? "warn" : "info", "hourglass"));
-    return ui.card({ title: "Expired & expiring soon", sub: "Batches with stock expiring within " + near + " days", flush: true,
-      body: ui.table({ title: "Expiring batches", columns: [
-        { key: "item", label: "Item", strong: true, value: (b) => b.item, search: (b) => b.batch, render: (b) => ui.cell(b.item, b.batch) },
-        { key: "_k", label: "Store", value: (b) => dashOf(b._k).label, render: (b) => tag(b._k) },
-        { key: "qty", label: "Qty", num: true, value: (b) => b.qty },
+    // expiry is tracked for Pantry only; already-expired stock is left out
+    const near = cfg().nearExpiryDays || 15;
+    const rows = state.models.pantry ? K.expiringSoon(state.models.pantry, near) : [];
+    const badge = (b) => (b.days === 0 ? ui.badge("Today", "crit", "alert") : ui.badge(U.plural(b.days, "day") + " left", b.days <= 7 ? "warn" : "info", "hourglass"));
+    return ui.card({ title: "Pantry: expiring in " + near + " days", sub: "Stock that expires within the next " + near + " days", flush: true,
+      body: ui.table({ title: "Pantry expiring soon", columns: [
+        { key: "name", label: "Item", strong: true, value: (b) => b.name, search: (b) => b.sub, render: (b) => ui.cell(b.name, b.sub) },
+        { key: "stock", label: "Qty", num: true, value: (b) => b.stock },
         { key: "expiry", label: "Expiry", date: true, value: (b) => b.expiry, render: (b) => U.fmtDate(b.expiry) },
-        { key: "days", label: "Status", value: (b) => b.days, text: (b) => (b.days < 0 ? "Expired" : U.plural(b.days, "day") + " left"), render: badge }
-      ], rows: rows, noun: "batch", search: rows.length > 8, sort: { key: "days", dir: "asc" }, pageSize: 8, empty: "Nothing expires in the next " + near + " days." }) });
+        { key: "days", label: "Status", value: (b) => b.days, text: (b) => (b.days === 0 ? "Today" : U.plural(b.days, "day") + " left"), render: badge }
+      ], rows: rows, noun: "batch", search: rows.length > 8, sort: { key: "days", dir: "asc" }, pageSize: 8, empty: "Nothing in Pantry expires in the next " + near + " days." }) });
   }
 
   function render() {
@@ -256,6 +251,8 @@
 
   /* ---------- boot ---------- */
   function boot() {
+    const only = C.config.dashboards[C.config.onlyDashboard];
+    if (only) { location.replace(C.api.pageHref(only.page)); return; } // single-store mode: no console
     if (C.config.defaultPeriod && U.PERIODS.some((p) => p.key === C.config.defaultPeriod)) state.period = C.config.defaultPeriod;
     document.title = "Management Console · " + C.config.orgName;
     renderTopbar();
